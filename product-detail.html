@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>식물 상세 정보 - PlantiaWorld</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Firebase SDK -->
+       <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+       <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+       <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        body { 
+            font-family: 'Noto Sans KR', sans-serif; 
+            background: linear-gradient(135deg, #f8fdf8 0%, #e8f5e9 100%);
+            min-height: 100vh;
+        }
+        .slider-container { 
+            position: relative; 
+            overflow: hidden; 
+            background: #f3f4f6; 
+            aspect-ratio: 1 / 1; 
+            max-height: 70vh;
+        }
+        .slider-wrapper { 
+            display: flex; 
+            transition: transform 0.3s ease-out; 
+            height: 100%; 
+        }
+        .slider-item { 
+            min-width: 100%; 
+            height: 100%; 
+            object-fit: cover;
+            background-color: #e5e7eb;
+        }
+        .indicator { 
+            position: absolute; 
+            bottom: 16px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            display: flex; 
+            gap: 8px; 
+            z-index: 10;
+        }
+        .dot { 
+            width: 8px; 
+            height: 8px; 
+            border-radius: 50%; 
+            background: rgba(255,255,255,0.5); 
+            transition: 0.3s; 
+            cursor: pointer;
+        }
+        .dot.active { 
+            background: #fff; 
+            width: 20px; 
+            border-radius: 4px; 
+        }
+        .floating-bottom { 
+            position: fixed; 
+            bottom: 0; 
+            left: 0; 
+            right: 0; 
+            background: white; 
+            border-top: 1px solid #e5e7eb; 
+            padding: 16px; 
+            z-index: 50; 
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .badge-sold { background: #dc2626; color: white; }
+        .badge-free { background: #10b981; color: white; }
+        .badge-reserved { background: #f59e0b; color: white; }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #10b981;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .seller-info {
+            background: white;
+            border-radius: 16px;
+            padding: 16px;
+            margin: 16px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .product-status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="pb-24">
+
+    <!-- 헤더 -->
+    <header class="fixed top-0 left-0 right-0 z-50 flex justify-between p-4 items-center bg-white/80 backdrop-blur-sm">
+        <button onclick="goBack()" class="w-10 h-10 bg-white/90 backdrop-blur rounded-full shadow flex items-center justify-center hover:bg-gray-50 transition">
+            <i class="fas fa-arrow-left text-gray-800"></i>
+        </button>
+        <div class="flex gap-2">
+            <button onclick="shareLink()" class="w-10 h-10 bg-white/90 backdrop-blur rounded-full shadow flex items-center justify-center hover:bg-gray-50 transition">
+                <i class="fas fa-share-alt text-gray-800"></i>
+            </button>
+            <button onclick="toggleLike()" class="w-10 h-10 bg-white/90 backdrop-blur rounded-full shadow flex items-center justify-center hover:bg-gray-50 transition">
+                <i id="likeIcon" class="far fa-heart text-gray-800"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- 로딩 화면 -->
+    <div id="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <p class="text-gray-500">상품을 불러오는 중...</p>
+    </div>
+
+    <!-- 메인 콘텐츠 -->
+    <main id="content" class="hidden">
+        <!-- 이미지 슬라이더 -->
+        <div class="slider-container">
+            <div id="sliderWrapper" class="slider-wrapper"></div>
+            <div id="sliderIndicator" class="indicator"></div>
+            
+            <!-- 상품 상태 배지 -->
+            <div id="productStatus" class="product-status"></div>
+        </div>
+
+        <!-- 판매자 정보 -->
+        <div class="seller-info">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <div id="sellerAvatar" class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center text-green-600">
+                        <i class="fas fa-user text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 id="sellerName" class="font-bold text-gray-800">초록이웃</h3>
+                        <p id="productLocation" class="text-xs text-gray-500"></p>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <span class="inline-block px-3 py-1 bg-green-50 text-green-600 rounded-full text-xs font-bold">매너온도 37.5°C</span>
+                    <p class="text-xs text-gray-400 mt-1">1시간 내 응답</p>
+                </div>
+            </div>
+            <hr class="border-gray-100 my-4">
+            
+            <!-- 상품 정보 -->
+            <div class="mb-6">
+                <h2 id="productTitle" class="text-2xl font-bold text-gray-900 mb-2"></h2>
+                <div class="flex gap-2 text-sm text-gray-400 mb-4">
+                    <span id="productCategory" class="bg-green-50 text-green-600 px-2 py-1 rounded-full"></span>
+                    <span>•</span>
+                    <span id="productDate" class="text-gray-400"></span>
+                </div>
+                
+                <div class="mb-6">
+                    <p id="productDescription" class="text-gray-700 leading-relaxed whitespace-pre-wrap"></p>
+                </div>
+                
+                <!-- 추가 정보 -->
+                <div class="grid grid-cols-2 gap-4 mb-6">
+                    <div class="bg-gray-50 p-3 rounded-lg">
+                        <p class="text-xs text-gray-500 mb-1">거래희망장소</p>
+                        <p id="tradeLocation" class="font-medium">문의</p>
+                    </div>
+                    <div class="bg-gray-50 p-3 rounded-lg">
+                        <p class="text-xs text-gray-500 mb-1">상태</p>
+                        <p id="productCondition" class="font-medium">좋음</p>
+                    </div>
+                </div>
+                
+                <!-- 조회수 & 좋아요 -->
+                <div class="flex gap-4 text-sm text-gray-400">
+                    <span><i class="far fa-eye mr-1"></i><span id="viewCount">12</span> 조회</span>
+                    <span>•</span>
+                    <span><i class="far fa-heart mr-1"></i><span id="likeCount">0</span> 관심</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 상품 ID (디버깅용) -->
+        <div class="px-5 text-xs text-gray-400 text-center mt-4">
+            상품 ID: <span id="debugProductId"></span>
+        </div>
+    </main>
+
+    <!-- 하단 고정 바 -->
+    <div class="floating-bottom">
+        <div class="max-w-2xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <div>
+                    <p id="productPrice" class="text-xl font-bold text-gray-900"></p>
+                    <p id="priceInfo" class="text-xs text-green-600 font-bold"></p>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button id="actionBtn" onclick="handleAction()" 
+                        class="bg-green-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-green-700 transition whitespace-nowrap">
+                    채팅하기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========== Firebase 초기화 ==========
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8W_2h3oI9S21-hoXKYBKs7rbdo86n6dc",
+            authDomain: "plantiaworld.firebaseapp.com",
+            projectId: "plantiaworld",
+            storageBucket: "plantiaworld.firebasestorage.app",
+            messagingSenderId: "18112813073",
+            appId: "1:18112813073:web:7247046c038a3831db79b",
+            measurementId: "G-8XSZM279KY"
+        };
+
+        let db, auth;
+        let currentProduct = null;
+        let unsubscribeProduct = null;
+        
+        // ========== 페이지 초기화 ==========
+        document.addEventListener('DOMContentLoaded', async () => {
+            console.log('상세 페이지 로드 시작');
+            
+            try {
+                // Firebase 초기화
+                if (!firebase.apps.length) {
+                    firebase.initializeApp(firebaseConfig);
+                }
+                
+                db = firebase.firestore();
+                auth = firebase.auth();
+                
+                // URL에서 productId 가져오기
+                const urlParams = new URLSearchParams(window.location.search);
+                const productId = urlParams.get('id');
+                
+                if (!productId) {
+                    alert('상품 정보가 없습니다.');
+                    location.href = 'index.html';
+                    return;
+                }
+                
+                document.getElementById('debugProductId').textContent = productId;
+                
+                // Firestore에서 상품 데이터 로드
+                await loadProductFromFirestore(productId);
+                
+                // 조회수 증가
+                await incrementViewCount(productId);
+                
+                // 로딩 숨기기
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('content').classList.remove('hidden');
+                
+            } catch (error) {
+                console.error('페이지 로드 오류:', error);
+                fallbackToLocalStorage();
+            }
+        });
+        
+        // ========== Firestore에서 상품 로드 ==========
+        async function loadProductFromFirestore(productId) {
+            try {
+                console.log('Firestore에서 상품 로드:', productId);
+                
+                // Firestore 리스너 설정
+                unsubscribeProduct = db.collection('products').doc(productId)
+                    .onSnapshot((doc) => {
+                        if (doc.exists) {
+                            const product = doc.data();
+                            product.id = doc.id;
+                            currentProduct = product;
+                            
+                            console.log('상품 데이터:', product);
+                            updateProductUI(product);
+                            
+                            // 로컬 스토리지에 저장 (오프라인용)
+                            saveToLocalStorage(product);
+                        } else {
+                            console.log('상품이 존재하지 않음');
+                            showProductNotFound();
+                        }
+                    }, (error) => {
+                        console.error('Firestore 리스너 오류:', error);
+                        fallbackToLocalStorage();
+                    });
+                    
+            } catch (error) {
+                console.error('Firestore 로드 오류:', error);
+                fallbackToLocalStorage();
+            }
+        }
+        
+        // ========== UI 업데이트 ==========
+        function updateProductUI(product) {
+            // 기본 정보
+            document.getElementById('productTitle').textContent = product.title || '제목 없음';
+            document.getElementById('productCategory').textContent = product.category || '기타';
+            document.getElementById('productDescription').textContent = product.description || '상품 설명이 없습니다.';
+            
+            // 위치 정보
+            const location = product.sellerLocation || product.location || '지역 정보 없음';
+            document.getElementById('productLocation').textContent = location;
+            document.getElementById('tradeLocation').textContent = location;
+            
+            // 날짜 정보
+            const date = formatDate(product.createdAt || product.createdDate);
+            document.getElementById('productDate').textContent = date;
+            
+            // 가격 정보
+            const price = product.price || 0;
+            const priceElement = document.getElementById('productPrice');
+            const priceInfoElement = document.getElementById('priceInfo');
+            
+            if (price === 0) {
+                priceElement.textContent = '나눔 🌱';
+                priceElement.className = 'text-xl font-bold text-green-600';
+                priceInfoElement.textContent = '무료 나눔';
+            } else {
+                priceElement.textContent = price.toLocaleString() + '원';
+                priceElement.className = 'text-xl font-bold text-gray-900';
+                priceInfoElement.textContent = '가격 제안 불가';
+            }
+            
+            // 상태 정보
+            const statusElement = document.getElementById('productStatus');
+            const status = product.status || '판매중';
+            
+            statusElement.innerHTML = '';
+            if (status === '판매완료') {
+                statusElement.innerHTML = '<span class="badge badge-sold">판매완료</span>';
+                document.getElementById('actionBtn').textContent = '판매완료';
+                document.getElementById('actionBtn').className = 'bg-gray-400 text-white px-6 py-3 rounded-xl font-bold cursor-not-allowed';
+                document.getElementById('actionBtn').onclick = null;
+            } else if (status === '예약중') {
+                statusElement.innerHTML = '<span class="badge badge-reserved">예약중</span>';
+                document.getElementById('actionBtn').textContent = '예약 문의';
+            } else if (price === 0) {
+                statusElement.innerHTML = '<span class="badge badge-free">무료나눔</span>';
+                document.getElementById('actionBtn').textContent = '나눔 문의';
+            }
+            
+            // 좋아요 수
+            const likes = product.likes || 0;
+            document.getElementById('likeCount').textContent = likes;
+            
+            // 판매자 정보
+            document.getElementById('sellerName').textContent = product.sellerName || '초록이웃';
+            
+            // 이미지 슬라이더
+            updateImageSlider(product);
+            
+            // 내가 좋아요 했는지 확인
+            checkIfLiked(product.id);
+        }
+        
+        // ========== 이미지 슬라이더 업데이트 ==========
+        function updateImageSlider(product) {
+            const wrapper = document.getElementById('sliderWrapper');
+            const indicator = document.getElementById('sliderIndicator');
+            
+            wrapper.innerHTML = '';
+            indicator.innerHTML = '';
+            
+            // 이미지 배열 확인
+            const images = product.images || [];
+            let imageUrls = [];
+            
+            if (images.length > 0) {
+                imageUrls = images;
+            } else {
+                // 기본 이미지 생성
+                imageUrls = [
+                    `https://images.unsplash.com/photo-1416879595882-3373a0480b5b?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80&text=${encodeURIComponent(product.title || '식물')}`
+                ];
+            }
+            
+            // 이미지 추가
+            imageUrls.forEach((imgSrc, idx) => {
+                const img = document.createElement('img');
+                img.src = imgSrc;
+                img.className = 'slider-item';
+                img.alt = product.title || '식물 이미지';
+                img.onerror = function() {
+                    this.src = 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80';
+                };
+                wrapper.appendChild(img);
+                
+                const dot = document.createElement('div');
+                dot.className = `dot ${idx === 0 ? 'active' : ''}`;
+                dot.onclick = () => goToSlide(idx);
+                indicator.appendChild(dot);
+            });
+            
+            // 자동 슬라이드 설정 (이미지가 2개 이상일 때)
+            if (imageUrls.length > 1) {
+                startAutoSlide();
+            }
+        }
+        
+        // ========== 슬라이드 기능 ==========
+        let currentSlide = 0;
+        let slideInterval = null;
+        
+        function goToSlide(index) {
+            const wrapper = document.getElementById('sliderWrapper');
+            const dots = document.querySelectorAll('.dot');
+            
+            currentSlide = index;
+            wrapper.style.transform = `translateX(-${currentSlide * 100}%)`;
+            
+            dots.forEach((dot, i) => {
+                dot.classList.toggle('active', i === currentSlide);
+            });
+        }
+        
+        function startAutoSlide() {
+            if (slideInterval) clearInterval(slideInterval);
+            
+            slideInterval = setInterval(() => {
+                const dots = document.querySelectorAll('.dot');
+                currentSlide = (currentSlide + 1) % dots.length;
+                goToSlide(currentSlide);
+            }, 4000);
+        }
+        
+        // ========== 좋아요 기능 ==========
+        async function toggleLike() {
+            const user = auth.currentUser;
+            if (!user) {
+                alert('로그인이 필요합니다.');
+                location.href = 'login.html?returnUrl=' + encodeURIComponent(window.location.href);
+                return;
+            }
+            
+            const productId = currentProduct.id;
+            const userId = user.uid;
+            const likeRef = db.collection('likes').doc(`${userId}_${productId}`);
+            
+            try {
+                const likeDoc = await likeRef.get();
+                const productRef = db.collection('products').doc(productId);
+                
+                if (likeDoc.exists) {
+                    // 좋아요 취소
+                    await likeRef.delete();
+                    await productRef.update({
+                        likes: firebase.firestore.FieldValue.increment(-1)
+                    });
+                    
+                    document.getElementById('likeIcon').className = 'far fa-heart text-gray-800';
+                } else {
+                    // 좋아요 추가
+                    await likeRef.set({
+                        userId: userId,
+                        productId: productId,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    
+                    await productRef.update({
+                        likes: firebase.firestore.FieldValue.increment(1)
+                    });
+                    
+                    document.getElementById('likeIcon').className = 'fas fa-heart text-red-500';
+                }
+            } catch (error) {
+                console.error('좋아요 오류:', error);
+                alert('좋아요 처리 중 오류가 발생했습니다.');
+            }
+        }
+        
+        async function checkIfLiked(productId) {
+            const user = auth.currentUser;
+            if (!user) return;
+            
+            const likeRef = db.collection('likes').doc(`${user.uid}_${productId}`);
+            
+            try {
+                const likeDoc = await likeRef.get();
+                if (likeDoc.exists) {
+                    document.getElementById('likeIcon').className = 'fas fa-heart text-red-500';
+                }
+            } catch (error) {
+                console.error('좋아요 확인 오류:', error);
+            }
+        }
+        
+        // ========== 조회수 증가 ==========
+        async function incrementViewCount(productId) {
+            try {
+                const productRef = db.collection('products').doc(productId);
+                await productRef.update({
+                    views: firebase.firestore.FieldValue.increment(1)
+                });
+            } catch (error) {
+                console.error('조회수 증가 오류:', error);
+            }
+        }
+        
+        // ========== 채팅/구매 기능 ==========
+        async function handleAction() {
+            const user = auth.currentUser;
+            if (!user) {
+                alert('로그인이 필요합니다.');
+                location.href = 'login.html?returnUrl=' + encodeURIComponent(window.location.href);
+                return;
+            }
+            
+            const status = currentProduct.status || '판매중';
+            
+            if (status === '판매완료') {
+                alert('이미 판매 완료된 상품입니다.');
+                return;
+            }
+            
+            // 채팅 시작
+            alert('채팅 기능이 준비 중입니다. 판매자에게 연락해주세요.\n\n' +
+                  '판매자: ' + (currentProduct.sellerName || '초록이웃') + '\n' +
+                  '상품: ' + currentProduct.title);
+            
+            // 채팅방 생성 로직 (구현 필요)
+            // const chatRef = db.collection('chats').add({
+            //     productId: currentProduct.id,
+            //     buyerId: user.uid,
+            //     sellerId: currentProduct.sellerId,
+            //     createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            // });
+        }
+        
+        // ========== 기타 기능 ==========
+        function goBack() {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = 'index.html';
+            }
+        }
+        
+        function shareLink() {
+            const url = window.location.href;
+            const title = currentProduct?.title || 'PlantiaWorld 상품';
+            
+            if (navigator.share) {
+                navigator.share({
+                    title: title,
+                    text: 'PlantiaWorld에서 이 상품을 확인해보세요!',
+                    url: url,
+                });
+            } else {
+                navigator.clipboard.writeText(url).then(() => {
+                    alert('링크가 복사되었습니다!');
+                });
+            }
+        }
+        
+        // ========== 유틸리티 함수 ==========
+        function formatDate(dateInput) {
+            if (!dateInput) return '방금 전';
+            
+            try {
+                let date;
+                if (dateInput.toDate) {
+                    date = dateInput.toDate();
+                } else if (typeof dateInput === 'string') {
+                    date = new Date(dateInput);
+                } else if (dateInput instanceof Date) {
+                    date = dateInput;
+                } else {
+                    date = new Date(dateInput);
+                }
+                
+                const now = new Date();
+                const diffInMinutes = Math.floor((now - date) / (1000 * 60));
+                
+                if (diffInMinutes < 1) return '방금 전';
+                if (diffInMinutes < 60) return `${diffInMinutes}분 전`;
+                if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}시간 전`;
+                if (diffInMinutes < 10080) return `${Math.floor(diffInMinutes / 1440)}일 전`;
+                
+                return date.toLocaleDateString('ko-KR');
+            } catch (e) {
+                return '시간 정보 없음';
+            }
+        }
+        
+        function fallbackToLocalStorage() {
+            console.log('로컬 스토리지에서 데이터 로드');
+            
+            const urlParams = new URLSearchParams(window.location.search);
+            const productId = urlParams.get('id');
+            const products = JSON.parse(localStorage.getItem('plantiaProducts') || '[]');
+            const product = products.find(p => p.id == productId);
+            
+            if (product) {
+                updateProductUI(product);
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('content').classList.remove('hidden');
+                
+                // 상태 표시
+                document.getElementById('debugProductId').textContent += ' (오프라인 모드)';
+                showOfflineNotice();
+            } else {
+                showProductNotFound();
+            }
+        }
+        
+        function saveToLocalStorage(product) {
+            try {
+                const products = JSON.parse(localStorage.getItem('plantiaProducts') || '[]');
+                const index = products.findIndex(p => p.id === product.id);
+                
+                if (index !== -1) {
+                    products[index] = product;
+                } else {
+                    products.push(product);
+                }
+                
+                localStorage.setItem('plantiaProducts', JSON.stringify(products));
+            } catch (error) {
+                console.error('로컬 스토리지 저장 오류:', error);
+            }
+        }
+        
+        function showProductNotFound() {
+            document.getElementById('loading').innerHTML = `
+                <div class="text-center py-12">
+                    <i class="fas fa-seedling text-6xl text-gray-300 mb-4"></i>
+                    <h2 class="text-xl font-bold text-gray-700 mb-2">상품을 찾을 수 없습니다</h2>
+                    <p class="text-gray-500 mb-6">삭제되었거나 존재하지 않는 상품입니다.</p>
+                    <button onclick="location.href='index.html'" 
+                            class="bg-green-600 text-white px-6 py-2 rounded-full font-medium">
+                        홈으로 가기
+                    </button>
+                </div>
+            `;
+        }
+        
+        function showOfflineNotice() {
+            const notice = document.createElement('div');
+            notice.className = 'bg-yellow-50 border-l-4 border-yellow-400 p-4 mx-4 my-4 rounded';
+            notice.innerHTML = `
+                <div class="flex items-center">
+                    <i class="fas fa-wifi-slash text-yellow-400 mr-2"></i>
+                    <p class="text-yellow-700 text-sm">
+                        오프라인 모드로 표시됩니다. 인터넷 연결 후 새로고침해주세요.
+                    </p>
+                </div>
+            `;
+            
+            document.querySelector('main').insertBefore(notice, document.querySelector('main').firstChild);
+        }
+        
+        // ========== 페이지 언로드 시 정리 ==========
+        window.addEventListener('beforeunload', () => {
+            if (unsubscribeProduct) {
+                unsubscribeProduct();
+            }
+            
+            if (slideInterval) {
+                clearInterval(slideInterval);
+            }
+        });
+    </script>
+</body>
+</html>

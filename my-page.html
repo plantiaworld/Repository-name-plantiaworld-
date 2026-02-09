@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>마이페이지 - PlantiaWorld</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        body { 
+            font-family: 'Noto Sans KR', sans-serif; 
+            background: linear-gradient(135deg, #f8fdf8 0%, #e8f5e9 100%);
+            min-height: 100vh;
+        }
+        .glass-card { 
+            background: rgba(255, 255, 255, 0.95); 
+            backdrop-filter: blur(10px); 
+            border: 1px solid rgba(255, 255, 255, 0.4); 
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.08); 
+        }
+        .nav-tab { 
+            position: relative; 
+            transition: all 0.3s ease; 
+            cursor: pointer; 
+            color: #64748b; 
+            border-radius: 12px;
+            padding: 12px 16px;
+        }
+        .nav-tab.active { 
+            color: #16a34a; 
+            font-weight: 700; 
+            background: rgba(22, 163, 74, 0.08);
+        }
+        .tab-content { 
+            animation: slideUp 0.4s ease-out; 
+        }
+        @keyframes slideUp { 
+            from { opacity: 0; transform: translateY(15px); } 
+            to { opacity: 1; transform: translateY(0); } 
+        }
+        .hidden { display: none !important; }
+        
+        .profile-image {
+            width: 140px;
+            height: 140px;
+            object-fit: cover;
+            border: 4px solid white;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #16a34a;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .empty-state {
+            padding: 60px 20px;
+            text-align: center;
+            color: #94a3b8;
+        }
+        
+        .badge-level {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        
+        .badge-beginner { background: #d1fae5; color: #065f46; }
+        .badge-intermediate { background: #fef3c7; color: #92400e; }
+        .badge-expert { background: #dbeafe; color: #1e40af; }
+        
+        .product-card {
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+        
+        .product-card:hover {
+            transform: translateY(-4px);
+            border-color: #16a34a;
+            box-shadow: 0 15px 30px rgba(22, 163, 74, 0.15);
+        }
+        
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        .toast-success { background-color: #10b981; }
+        .toast-error { background-color: #ef4444; }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .sold-badge {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(220, 38, 38, 0.9);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: bold;
+            z-index: 10;
+        }
+        
+        .free-badge {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(16, 185, 129, 0.9);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: bold;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <header class="glass-card sticky top-0 z-50 border-b border-gray-100/50">
+        <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <a href="index.html" class="flex items-center space-x-3 hover:opacity-80 transition">
+                <div class="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-400 rounded-xl flex items-center justify-center shadow-lg">
+                    <i class="fas fa-leaf text-white text-lg"></i>
+                </div>
+                <div>
+                    <span class="font-bold text-xl text-gray-800">PlantiaWorld</span>
+                    <p class="text-[10px] text-gray-500 -mt-1">이웃과 식물을 나누는 공간</p>
+                </div>
+            </a>
+            <div class="flex items-center space-x-3">
+                <a href="add-product.html" class="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:shadow-lg hover:scale-[1.02] transition-all shadow-md">
+                    <i class="fas fa-plus mr-1.5"></i>식물 등록
+                </a>
+                <button onclick="handleLogout()" class="text-sm text-gray-500 hover:text-red-500 font-medium px-3 py-2 hover:bg-red-50 rounded-lg transition">
+                    <i class="fas fa-sign-out-alt mr-1.5"></i>로그아웃
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div id="loadingScreen" class="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="text-center">
+            <div class="loading-spinner"></div>
+            <p class="mt-4 text-gray-600 font-medium">마이페이지를 불러오는 중...</p>
+        </div>
+    </div>
+
+    <main class="container mx-auto px-4 py-8 max-w-6xl">
+        <div class="flex flex-col lg:flex-row gap-8">
+            <div class="lg:w-1/3 space-y-6">
+                <div class="glass-card rounded-[28px] p-8 text-center relative overflow-hidden">
+                    <div class="relative z-10">
+                        <div class="relative w-36 h-36 mx-auto mb-6 group">
+                            <img id="profileImage" src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80" 
+                                 class="profile-image rounded-full"
+                                 onerror="this.src='https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80'">
+                            <label for="profileUpload" class="absolute bottom-0 right-0 w-10 h-10 bg-green-500 rounded-full flex items-center justify-center border-4 border-white cursor-pointer hover:bg-green-600 transition shadow-lg">
+                                <i class="fas fa-camera text-white text-sm"></i>
+                                <input type="file" id="profileUpload" class="hidden" accept="image/*" onchange="handleProfileImageUpload(event)">
+                            </label>
+                        </div>
+                        
+                        <h2 class="text-2xl font-bold text-gray-800 mb-1" id="userNameDisplay">불러오는 중...</h2>
+                        <p class="text-green-600 font-medium mb-3" id="userNicknameDisplay">@loading</p>
+                        
+                        <div class="flex justify-center gap-3 mb-6 flex-wrap">
+                            <span id="userLevelBadge" class="badge-level badge-beginner">
+                                <i class="fas fa-seedling"></i>
+                                <span>초보 집사</span>
+                            </span>
+                            <span id="userLocationDisplay" class="badge-level bg-gray-100 text-gray-700">
+                                <i class="fas fa-map-marker-alt"></i>
+                                <span>위치 로딩중</span>
+                            </span>
+                        </div>
+                        
+                        <div class="grid grid-cols-3 gap-4 mb-6">
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-gray-800" id="plantCount">0</div>
+                                <div class="text-xs text-gray-500">내 식물</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-gray-800" id="soldCount">0</div>
+                                <div class="text-xs text-gray-500">판매완료</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-gray-800" id="likeCount">0</div>
+                                <div class="text-xs text-gray-500">받은 좋아요</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:w-2/3">
+                <div class="glass-card rounded-2xl p-2 mb-8">
+                    <div class="flex space-x-1">
+                        <button onclick="switchTab('myPlants')" id="tab-myPlants" class="nav-tab active flex-1 text-center">
+                            <i class="fas fa-seedling mr-2"></i>내 식물
+                        </button>
+                        <button onclick="switchTab('liked')" id="tab-liked" class="nav-tab flex-1 text-center">
+                            <i class="fas fa-heart mr-2"></i>관심 목록
+                        </button>
+                        <button onclick="switchTab('sold')" id="tab-sold" class="nav-tab flex-1 text-center">
+                            <i class="fas fa-check-circle mr-2"></i>판매 완료
+                        </button>
+                    </div>
+                </div>
+
+                <div id="content-myPlants" class="tab-content">
+                    <div id="myPlantsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+                    <div id="myPlantsEmpty" class="hidden empty-state">등록한 식물이 없습니다.</div>
+                </div>
+
+                <div id="content-liked" class="tab-content hidden">
+                    <div id="likedContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+                    <div id="likedEmpty" class="hidden empty-state">관심 목록이 비어있습니다.</div>
+                </div>
+
+                <div id="content-sold" class="tab-content hidden">
+                    <div id="soldContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+                    <div id="soldEmpty" class="hidden empty-state">판매 완료된 상품이 없습니다.</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>
+
+    <script>
+        // 1. Firebase 설정 (사용자님의 실제 키값으로 확인됨)
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8W_2h3oI9S21-hoXKYBKs7rbdo86n6dc",
+            authDomain: "plantiaworld.firebaseapp.com",
+            projectId: "plantiaworld",
+            storageBucket: "plantiaworld.firebasestorage.app",
+            messagingSenderId: "18112813073",
+            appId: "1:18112813073:web:7247046c038a3831db79b"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+        const storage = firebase.storage();
+        let currentUser = null;
+
+        // 2. 알림 토스트 기능
+        function showToast(message, type = 'success') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `
+                <div class="flex items-center">
+                    <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-2"></i>
+                    <span>${message}</span>
+                </div>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+
+        // 3. 로그아웃 기능
+        function handleLogout() {
+            if(confirm('로그아웃 하시겠습니까?')) {
+                auth.signOut().then(() => { location.href = 'login.html'; });
+            }
+        }
+
+        // 4. 프로필 정보 로드
+        async function loadUserProfile(user) {
+            try {
+                const userDoc = await db.collection('users').doc(user.uid).get();
+                const userData = userDoc.data() || {};
+                
+                document.getElementById('userNameDisplay').textContent = userData.name || user.email.split('@')[0];
+                document.getElementById('userNicknameDisplay').textContent = '@' + (userData.nickname || user.email.split('@')[0]);
+                
+                if (userData.profileImage) {
+                    document.getElementById('profileImage').src = userData.profileImage;
+                }
+                
+                document.getElementById('userLocationDisplay').innerHTML = `
+                    <i class="fas fa-map-marker-alt"></i>
+                    <span>${userData.location || '위치 정보 없음'}</span>
+                `;
+                
+                const level = userData.level || 'beginner';
+                const levelBadge = document.getElementById('userLevelBadge');
+                levelBadge.className = 'badge-level ' + (level === 'expert' ? 'badge-expert' : (level === 'intermediate' ? 'badge-intermediate' : 'badge-beginner'));
+                levelBadge.innerHTML = `<i class="fas ${level === 'expert' ? 'fa-crown' : (level === 'intermediate' ? 'fa-leaf' : 'fa-seedling')}"></i><span>${level === 'expert' ? '전문 집사' : (level === 'intermediate' ? '중급 집사' : '초보 집사')}</span>`;
+                
+                await loadUserStats(user.uid);
+            } catch (error) {
+                console.error('프로필 로드 오류:', error);
+            }
+        }
+
+        // 5. 통계 데이터 로드
+        async function loadUserStats(userId) {
+            try {
+                const myPlantsQuery = await db.collection('products').where('sellerId', '==', userId).get();
+                const soldQuery = await db.collection('products').where('sellerId', '==', userId).where('status', '==', '판매완료').get();
+                
+                let totalLikes = 0;
+                myPlantsQuery.forEach(doc => { totalLikes += (doc.data().likes || 0); });
+                
+                document.getElementById('plantCount').textContent = myPlantsQuery.size;
+                document.getElementById('soldCount').textContent = soldQuery.size;
+                document.getElementById('likeCount').textContent = totalLikes;
+            } catch (error) {
+                console.error('통계 로드 오류:', error);
+            }
+        }
+
+        // 6. 식물 카드 HTML 생성 (에러 방지를 위해 변수 사용 방식 최적화)
+        function createPlantCard(plant, id) {
+            const img = (plant.images && plant.images.length > 0) ? plant.images[0] : 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=400&q=60';
+            const isSold = plant.status === '판매완료';
+            const isFree = plant.price === 0 || plant.price === '0';
+            const displayPrice = isFree ? '나눔 🌱' : (plant.price ? Number(plant.price).toLocaleString() + '원' : '가격 미정');
+            
+            return `
+                <div class="product-card glass-card rounded-2xl overflow-hidden relative cursor-pointer" onclick="location.href='product-detail.html?id=${id}'">
+                    ${isSold ? '<div class="sold-badge">판매완료</div>' : (isFree ? '<div class="free-badge">무료나눔</div>' : '')}
+                    <div class="aspect-square overflow-hidden bg-gray-100">
+                        <img src="${img}" class="w-full h-full object-cover hover:scale-105 transition-transform duration-300">
+                    </div>
+                    <div class="p-4">
+                        <h4 class="font-bold text-gray-800 text-sm mb-1 truncate">${plant.title || '제목 없음'}</h4>
+                        <div class="flex items-center justify-between">
+                            <p class="font-bold ${isFree ? 'text-green-600' : 'text-gray-900'}">${displayPrice}</p>
+                            <div class="flex items-center text-xs text-gray-500"><i class="far fa-heart mr-1"></i><span>${plant.likes || 0}</span></div>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        // 7. 탭 전환 및 데이터 로드 (allProducts 의존성 제거)
+        async function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('content-' + tabId).classList.remove('hidden');
+            document.getElementById('tab-' + tabId).classList.add('active');
+            
+            const container = document.getElementById(tabId + 'Container');
+            const empty = document.getElementById(tabId + 'Empty');
+            container.innerHTML = '<div class="col-span-full py-12 text-center"><div class="loading-spinner"></div></div>';
+
+            try {
+                if (tabId === 'myPlants') {
+                    const snapshot = await db.collection('products').where('sellerId', '==', currentUser.uid).get();
+                    renderList(snapshot, container, empty);
+                } else if (tabId === 'sold') {
+                    const snapshot = await db.collection('products').where('sellerId', '==', currentUser.uid).where('status', '==', '판매완료').get();
+                    renderList(snapshot, container, empty);
+                } else if (tabId === 'liked') {
+                    const userDoc = await db.collection('users').doc(currentUser.uid).get();
+                    const likedIds = userDoc.data()?.likedIds || [];
+                    container.innerHTML = '';
+                    if (likedIds.length === 0) {
+                        empty.classList.remove('hidden');
+                    } else {
+                        empty.classList.add('hidden');
+                        for (const id of likedIds) {
+                            const pDoc = await db.collection('products').doc(id).get();
+                            if (pDoc.exists) container.innerHTML += createPlantCard(pDoc.data(), pDoc.id);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+                showToast('데이터를 불러오지 못했습니다.', 'error');
+            }
+        }
+
+        // 리스트 렌더링 헬퍼 함수
+        function renderList(snapshot, container, empty) {
+            container.innerHTML = '';
+            if (snapshot.empty) {
+                empty.classList.remove('hidden');
+            } else {
+                empty.classList.add('hidden');
+                snapshot.forEach(doc => { container.innerHTML += createPlantCard(doc.data(), doc.id); });
+            }
+        }
+
+        // 8. 프로필 이미지 업로드 처리
+        async function handleProfileImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            try {
+                const storageRef = storage.ref(`profiles/${currentUser.uid}/${Date.now()}_${file.name}`);
+                await storageRef.put(file);
+                const url = await storageRef.getDownloadURL();
+                await db.collection('users').doc(currentUser.uid).update({ profileImage: url });
+                document.getElementById('profileImage').src = url;
+                showToast('이미지가 업데이트 되었습니다.');
+            } catch (e) { 
+                console.error(e);
+                showToast('업로드 실패', 'error'); 
+            }
+        }
+
+        // 초기 구동
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                currentUser = user;
+                await loadUserProfile(user);
+                await switchTab('myPlants');
+                document.getElementById('loadingScreen').classList.add('hidden');
+            } else {
+                location.href = 'login.html';
+            }
+        });
+    </script>
+</body>
+</html>

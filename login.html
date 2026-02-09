@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>로그인 및 회원가입 - PlantiaWorld</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        body { font-family: 'Noto Sans KR', sans-serif; }
+        .plant-bg {
+            background-image: url('https://images.unsplash.com/photo-1545241047-6083a3684587?ixlib=rb-4.0.3&auto=format&fit=crop&w=1000&q=80');
+            background-size: cover; background-position: center;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        #map { height: 180px; border-radius: 12px; margin-top: 8px; border: 1px solid #ddd; z-index: 10; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body class="plant-bg min-h-screen flex items-center justify-center p-4 py-12">
+
+    <div class="glass-card p-8 rounded-3xl shadow-2xl max-w-lg w-full">
+        <div class="text-center mb-6">
+            <div class="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <i class="fas fa-leaf text-white text-2xl"></i>
+            </div>
+            <h1 id="pageTitle" class="text-2xl font-bold text-gray-800">PlantiaWorld 시작하기</h1>
+            <p id="pageSubTitle" class="text-sm text-gray-500 mt-1">이웃과 식물을 나누는 즐거움</p>
+        </div>
+
+        <form id="authForm" class="space-y-4">
+            <div>
+                <label class="block text-xs font-bold text-gray-600 mb-1">이메일 주소</label>
+                <input type="email" id="email" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="example@email.com" required>
+            </div>
+
+            <div id="signupFields" class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-600 mb-1">성함</label>
+                        <input type="text" id="realName" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="본명">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-600 mb-1">닉네임</label>
+                        <input type="text" id="username" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="닉네임">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">활동 지역 (지도 클릭)</label>
+                    <div id="map"></div>
+                    <div class="mt-3 p-3 bg-green-50 rounded-xl flex items-center gap-2">
+                        <i class="fas fa-map-marker-alt text-green-600"></i>
+                        <p id="locationStatus" class="text-sm text-green-800 font-medium">지도를 클릭해 주세요</p>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-xs font-bold text-gray-600 mb-1">비밀번호</label>
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400"><i class="fas fa-lock"></i></span>
+                    <input type="password" id="password" class="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="6자 이상 입력" required>
+                </div>
+            </div>
+
+            <button type="submit" id="submitBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl shadow-lg transition transform active:scale-95 mt-4">
+                가입 완료 및 시작하기
+            </button>
+        </form>
+
+        <div class="mt-6 text-center">
+            <p id="toggleText" class="text-xs text-gray-400 font-medium">
+                이미 계정이 있으신가요? <button onclick="toggleMode()" class="text-green-600 underline focus:outline-none">로그인</button>
+            </p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
+            authDomain: "plantiaworld.firebaseapp.com",
+            projectId: "plantiaworld",
+            storageBucket: "plantiaworld.appspot.com",
+            messagingSenderId: "18112813073",
+            appId: "1:18112813073:web:7247046c038a3831db79b0"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let isLoginMode = false; // 현재 모드 (회원가입이 기본)
+
+        // --- 모드 전환 함수 ---
+        window.toggleMode = function() {
+            isLoginMode = !isLoginMode;
+            const signupFields = document.getElementById('signupFields');
+            const submitBtn = document.getElementById('submitBtn');
+            const pageTitle = document.getElementById('pageTitle');
+            const toggleText = document.getElementById('toggleText');
+
+            if (isLoginMode) {
+                signupFields.classList.add('hidden');
+                pageTitle.innerText = "다시 오셨군요!";
+                submitBtn.innerText = "로그인";
+                toggleText.innerHTML = `처음이신가요? <button onclick="toggleMode()" class="text-green-600 underline focus:outline-none">회원가입</button>`;
+            } else {
+                signupFields.classList.remove('hidden');
+                pageTitle.innerText = "PlantiaWorld 시작하기";
+                submitBtn.innerText = "가입 완료 및 시작하기";
+                toggleText.innerHTML = `이미 계정이 있으신가요? <button onclick="toggleMode()" class="text-green-600 underline focus:outline-none">로그인</button>`;
+                map.invalidateSize(); // 지도 깨짐 방지
+            }
+        };
+
+        // --- 지도 로직 ---
+        let userLocation = { lat: 37.5665, lng: 126.9780, name: "서울특별시" };
+        const map = L.map('map').setView([userLocation.lat, userLocation.lng], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        let marker;
+
+        map.on('click', function(e) {
+            const { lat, lng } = e.latlng;
+            if (marker) map.removeLayer(marker);
+            marker = L.marker([lat, lng]).addTo(map);
+            fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=ko`)
+                .then(res => res.json())
+                .then(data => {
+                    userLocation.name = data.display_name.split(',')[0] || "알 수 없는 위치";
+                    userLocation.lat = lat; userLocation.lng = lng;
+                    document.getElementById('locationStatus').innerText = `현재 위치: ${userLocation.name}`;
+                });
+        });
+
+        // --- 인증 처리 (로그인/회원가입 통합) ---
+        document.getElementById('authForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('submitBtn');
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            btn.disabled = true;
+            btn.innerText = "처리 중...";
+
+            try {
+                if (isLoginMode) {
+                    // [로그인 로직]
+                    await signInWithEmailAndPassword(auth, email, password);
+                    alert("성공적으로 로그인되었습니다! 🌱");
+                    location.href = 'index.html';
+                } else {
+                    // [회원가입 로직]
+                    const nickname = document.getElementById('username').value;
+                    const realName = document.getElementById('realName').value;
+                    if (!marker) return alert('지도를 클릭해 활동 지역을 선택해주세요! 📍');
+
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    await setDoc(doc(db, "users", userCredential.user.uid), {
+                        uid: userCredential.user.uid,
+                        email, nickname, realName,
+                        location: userLocation.name,
+                        lat: userLocation.lat, lng: userLocation.lng,
+                        joinDate: new Date().toISOString()
+                    });
+                    alert(`반갑습니다, ${nickname}님! 회원가입이 완료되었습니다.`);
+                    location.href = 'index.html';
+                }
+            } catch (error) {
+                let msg = "오류가 발생했습니다.";
+                if (error.code === "auth/email-already-in-use") msg = "이미 가입된 이메일입니다. 로그인 모드로 전환하여 로그인해주세요.";
+                else if (error.code === "auth/wrong-password") msg = "비밀번호가 틀렸습니다.";
+                else if (error.code === "auth/user-not-found") msg = "존재하지 않는 계정입니다.";
+                
+                alert(msg);
+                console.error(error);
+                btn.disabled = false;
+                btn.innerText = isLoginMode ? "로그인" : "가입 완료 및 시작하기";
+            }
+        });
+
+        // 이미 로그인 된 상태면 index로 이동
+        onAuthStateChanged(auth, (user) => {
+            if (user) location.href = 'index.html';
+        });
+    </script>
+</body>
+</html>

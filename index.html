@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PlantiaWorld - 이웃과 식물을 나누는 공간</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, collection, onSnapshot, query, limit } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+
+        // ========== Firebase 설정 ==========
+        const firebaseConfig = {
+            apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
+            authDomain: "plantiaworld.firebaseapp.com",
+            projectId: "plantiaworld",
+            storageBucket: "plantiaworld.appspot.com",
+            messagingSenderId: "18112813073",
+            appId: "1:18112813073:web:7247046c038a3831db79b0"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        window.auth = auth;
+        window.db = db;
+
+        let allProducts = [];
+        let currentFilter = 'all';
+        let currentSort = 'recent';
+
+        // ========== 1. 로그인 상태 감지 및 UI 제어 (중요 수정!) ==========
+        onAuthStateChanged(auth, (user) => {
+            const authButtons = document.getElementById('authButtons');
+            const myPageBtn = document.getElementById('myPageBtn');
+            const writeBtn = document.getElementById('writeBtn');
+            const localSection = document.getElementById('localProductsSection');
+
+            if (user) {
+                // [로그인 완료 상태]
+                const userName = user.displayName || user.email.split('@')[0];
+                authButtons.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs font-bold text-green-700 hidden md:block">${userName} 집사님</span>
+                        <button onclick="handleLogout()" class="text-xs font-bold text-red-400 hover:text-red-600">로그아웃</button>
+                    </div>
+                `;
+                
+                // 마이페이지 버튼 클릭 시 이동 설정
+                myPageBtn.onclick = () => { location.href = 'my-page.html'; };
+                
+                writeBtn?.classList.remove('hidden');
+                localSection?.classList.remove('hidden');
+            } else {
+                // [로그아웃 상태]
+                authButtons.innerHTML = `
+                    <a href="login.html" class="text-sm font-bold text-gray-600 hover:text-green-600">로그인/회원가입</a>
+                `;
+                
+                // 마이페이지 버튼 클릭 시 안내창 띄우기
+                myPageBtn.onclick = () => {
+                    alert("로그인이 필요한 서비스입니다. 로그인 페이지로 이동합니다.");
+                    location.href = 'login.html';
+                };
+
+                writeBtn?.classList.add('hidden');
+                localSection?.classList.add('hidden');
+            }
+            displayProducts(); 
+        });
+
+        // ========== 2. 상품 데이터 로드 및 정렬 로직 (기존과 동일) ==========
+        const productsRef = collection(db, 'products');
+        onSnapshot(query(productsRef, limit(100)), (snapshot) => {
+            allProducts = [];
+            snapshot.forEach((doc) => {
+                allProducts.push({ id: doc.id, ...doc.data() });
+            });
+            document.getElementById('loadingIndicator')?.classList.add('hidden');
+            document.getElementById('productGrid')?.classList.remove('hidden');
+            displayProducts();
+        });
+
+        window.displayProducts = function() {
+            const container = document.getElementById('productGrid');
+            if (!container) return;
+            let filtered = currentFilter === 'all' ? [...allProducts] : allProducts.filter(p => p.category === currentFilter);
+            filtered.sort((a, b) => {
+                if (currentSort === 'price') return (Number(a.price) || 0) - (Number(b.price) || 0);
+                const dateA = a.createdAt?.seconds ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+                const dateB = b.createdAt?.seconds ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+                return dateB - dateA;
+            });
+            document.getElementById('sectionTitle').textContent = currentFilter === 'all' ? '최신 식물' : currentFilter;
+            document.getElementById('productCount').textContent = `${filtered.length}개 상품`;
+            let html = filtered.map(p => createCardHtml(p)).join('');
+            if (auth.currentUser) {
+                html += `<div onclick="location.href='add-product.html'" class="product-card border-2 border-dashed border-green-200 rounded-2xl flex flex-col items-center justify-center p-6 text-green-600 hover:bg-green-50 min-h-[200px] cursor-pointer"><i class="fas fa-plus-circle text-3xl mb-2"></i><span class="font-medium text-sm">나도 등록하기</span></div>`;
+            }
+            container.innerHTML = html;
+            displayLocalProducts();
+        };
+
+        window.handleLogout = () => {
+            if(confirm('로그아웃 하시겠습니까?')) {
+                signOut(auth).then(() => {
+                    alert('로그아웃 되었습니다.');
+                    location.reload();
+                });
+            }
+        };
+
+        window.filterProducts = (cat) => { currentFilter = cat; displayProducts(); };
+        window.sortProducts = (type) => { 
+            currentSort = type; 
+            document.getElementById('sortRecentBtn').className = type === 'recent' ? 'text-green-600 font-medium' : 'text-gray-400 hover:text-green-600';
+            document.getElementById('sortPriceBtn').className = type === 'price' ? 'text-green-600 font-medium' : 'text-gray-400 hover:text-green-600';
+            displayProducts(); 
+        };
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        body { font-family: 'Noto Sans KR', sans-serif; }
+        .plant-gradient { background: linear-gradient(135deg, #f8fdf8 0%, #e8f5e9 100%); }
+        .btn-primary { background: linear-gradient(135deg, #2e8b57 0%, #32cd32 100%); transition: all 0.3s ease; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(34, 139, 34, 0.3); }
+        .category-card { transition: all 0.3s ease; border: 2px solid transparent; cursor: pointer; }
+        .category-card:hover { transform: translateY(-8px); border-color: #2e8b57; box-shadow: 0 20px 40px rgba(46, 139, 87, 0.15); }
+        .product-card { transition: all 0.2s ease; height: 100%; cursor: pointer; }
+        .product-card:hover { transform: translateY(-4px); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1); }
+        .hidden { display: none !important; }
+        .loading-spinner { border: 3px solid #f3f3f3; border-top: 3px solid #2e8b57; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .product-image-container { position: relative; padding-bottom: 100%; overflow: hidden; }
+        .product-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    </style>
+</head>
+<body class="plant-gradient min-h-screen">
+
+    <header class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-3 flex items-center justify-between">
+            <a href="index.html" class="flex items-center space-x-2">
+                <div class="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center">
+                    <i class="fas fa-leaf text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-green-800 leading-tight">PlantiaWorld</h1>
+                    <p class="text-[10px] text-gray-500">이웃과 식물을 나누는 공간</p>
+                </div>
+            </a>
+            <div class="flex items-center space-x-4">
+                <button id="myPageBtn" class="flex items-center text-gray-600 hover:text-green-700">
+                    <i class="fas fa-user-circle mr-1 text-lg"></i><span class="text-sm font-medium">마이페이지</span>
+                </button>
+                <button id="writeBtn" class="hidden btn-primary text-white px-5 py-2 rounded-full text-sm font-medium" onclick="location.href='add-product.html'">
+                    <i class="fas fa-plus mr-1"></i>글쓰기
+                </button>
+                <div id="authButtons"></div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8">
+        <section class="mb-12">
+            <h2 class="text-xl font-bold text-gray-800 mb-6 flex items-center"><span class="w-1 h-6 bg-green-500 rounded-full mr-2"></span>카테고리별 둘러보기</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="category-card bg-white rounded-2xl p-6 text-center shadow-sm" onclick="filterProducts('관엽식물')"><div class="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-seedling text-green-600 text-xl"></i></div><h3 class="font-bold text-gray-800 text-sm">관엽식물</h3></div>
+                <div class="category-card bg-white rounded-2xl p-6 text-center shadow-sm" onclick="filterProducts('다육식물')"><div class="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-spa text-green-600 text-xl"></i></div><h3 class="font-bold text-gray-800 text-sm">다육식물</h3></div>
+                <div class="category-card bg-white rounded-2xl p-6 text-center shadow-sm" onclick="filterProducts('화분/흙')"><div class="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-tint text-green-600 text-xl"></i></div><h3 class="font-bold text-gray-800 text-sm">화분/용품</h3></div>
+                <div class="category-card bg-white rounded-2xl p-6 text-center shadow-sm" onclick="filterProducts('정보공유')"><div class="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-book text-green-600 text-xl"></i></div><h3 class="font-bold text-gray-800 text-sm">정보공유</h3></div>
+            </div>
+        </section>
+
+        <section class="mb-10">
+            <div class="flex justify-between items-end mb-6 border-b pb-4">
+                <h2 class="text-2xl font-bold text-gray-800" id="sectionTitle">최신 식물</h2>
+                <div class="flex items-center space-x-4 text-sm">
+                    <span id="productCount" class="text-gray-500">0개 상품</span>
+                    <button id="sortRecentBtn" class="text-green-600 font-medium" onclick="sortProducts('recent')">최신순</button>
+                    <button id="sortPriceBtn" class="text-gray-400 hover:text-green-600" onclick="sortProducts('price')">가격순</button>
+                </div>
+            </div>
+            <div id="loadingIndicator"><div class="loading-spinner"></div></div>
+            <div id="productGrid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 hidden"></div>
+        </section>
+
+        <section id="localProductsSection" class="mb-10 hidden bg-white rounded-3xl p-8 shadow-sm">
+            <h2 class="text-xl font-bold text-gray-800 mb-6"><i class="fas fa-map-marker-alt text-green-600 mr-2"></i>우리 동네 인기 상품</h2>
+            <div id="localProductGrid" class="grid grid-cols-2 md:grid-cols-6 gap-4"></div>
+        </section>
+        </main>
+
+            <footer class="bg-gray-900 text-white py-12 mt-20">
+             <div class="container mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-8 text-sm">
+             <div>
+                <div class="flex items-center space-x-2 mb-4">
+                    <i class="fas fa-leaf text-green-500 text-xl"></i>
+                    <h3 class="text-lg font-bold">PlantiaWorld</h3>
+                </div>
+                <p class="text-gray-400 leading-relaxed">이웃과 건강한 식물 문화를 나눕니다.<br>초록빛 일상을 함께 만들어가요.</p>
+            </div>
+            <div>
+                <h4 class="font-bold mb-4">고객지원</h4>
+                <ul class="space-y-2 text-gray-400">
+                    <li><i class="fas fa-envelope mr-2"></i>inf-plantiaworld@gmail.com</li>
+                    <li><i class="fas fa-phone mr-2"></i>010-3024-7442</li>
+                </ul>
+            </div>
+            <div class="text-center md:text-right text-gray-500">
+                <p>© 2026 PlantiaWorld. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+         <script>
+        function createCardHtml(p) {
+            const thumbnail = (p.images && p.images.length > 0) ? p.images[0] : 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=400';
+            const isFree = Number(p.price) === 0;
+            return `<div class="product-card bg-white rounded-2xl overflow-hidden shadow-sm flex flex-col" onclick="location.href='product-detail.html?id=${p.id}'"><div class="product-image-container"><img src="${thumbnail}" class="product-image" alt="식물">${isFree ? '<div class="absolute top-2 left-2 bg-green-600 text-white px-2 py-1 rounded-lg text-[10px] font-bold">무료나눔</div>' : ''}</div><div class="p-4 flex flex-col flex-grow"><h3 class="text-sm font-semibold text-gray-800 line-clamp-2 mb-2">${p.title || '식물'}</h3><p class="text-green-700 font-bold mt-auto">${isFree ? '나눔 🌱' : Number(p.price).toLocaleString() + '원'}</p><p class="text-[10px] text-gray-400 mt-1"><i class="fas fa-map-marker-alt mr-1"></i>${p.location || '지역미정'}</p></div></div>`;
+        }
+        function displayLocalProducts() {
+            const grid = document.getElementById('localProductGrid');
+            if(grid) { const localItems = allProducts.slice(0, 6); grid.innerHTML = localItems.map(p => createCardHtml(p)).join(''); }
+        }
+    </script>
+</body>
+</html>

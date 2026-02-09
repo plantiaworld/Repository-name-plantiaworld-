@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>식물 등록 - PlantiaWorld</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #f9fafb; }
+        .input-focus:focus { outline: none; border-color: #2e8b57; ring: 2px; border: 2px solid #2e8b57; }
+        .btn-submit { background: linear-gradient(135deg, #2e8b57 0%, #32cd32 100%); transition: all 0.3s; }
+        .btn-submit:disabled { background: #ccc; cursor: not-allowed; }
+        .preview-item { position: relative; width: 100px; height: 100px; }
+        .preview-item img { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; border: 1px solid #e5e7eb; }
+        .delete-btn { position: absolute; top: -5px; right: -5px; background: rgba(0,0,0,0.7); color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border: 2px solid white; z-index: 10; }
+    </style>
+</head>
+<body>
+
+    <header class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-4 flex items-center">
+            <button onclick="location.href='index.html'" class="text-gray-600 hover:text-green-700 mr-4">
+                <i class="fas fa-arrow-left text-xl"></i>
+            </button>
+            <h1 class="text-xl font-bold text-gray-800">식물 나눔/판매 등록</h1>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8 max-w-2xl">
+        <form id="productForm" class="space-y-6 bg-white p-6 md:p-8 rounded-3xl shadow-sm">
+            
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-3">사진 등록 (최대 8장)</label>
+                <div class="flex flex-wrap gap-3">
+                    <label class="w-24 h-24 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 shrink-0">
+                        <i class="fas fa-camera text-gray-400 text-xl mb-1"></i>
+                        <span id="imageCountText" class="text-[10px] text-gray-400">0/8</span>
+                        <input type="file" id="imageInput" accept="image/*" class="hidden" multiple onchange="handleImageUpload(this)">
+                    </label>
+                    <div id="imagePreviewList" class="flex flex-wrap gap-3"></div>
+                </div>
+            </div>
+
+            <div>
+                <label for="title" class="block text-sm font-bold text-gray-700 mb-2">글 제목</label>
+                <input type="text" id="title" required placeholder="식물 이름이나 특징을 적어주세요" 
+                       class="w-full px-4 py-3 rounded-xl border border-gray-200 input-focus">
+            </div>
+
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-2">카테고리</label>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <label class="cursor-pointer">
+                        <input type="radio" name="category" value="관엽식물" class="hidden peer" checked>
+                        <div class="py-2 text-center border border-gray-200 rounded-lg peer-checked:bg-green-50 peer-checked:border-green-500 peer-checked:text-green-600 text-sm font-medium">관엽식물</div>
+                    </label>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="category" value="다육식물" class="hidden peer">
+                        <div class="py-2 text-center border border-gray-200 rounded-lg peer-checked:bg-green-50 peer-checked:border-green-500 peer-checked:text-green-600 text-sm font-medium">다육식물</div>
+                    </label>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="category" value="화분/흙" class="hidden peer">
+                        <div class="py-2 text-center border border-gray-200 rounded-lg peer-checked:bg-green-50 peer-checked:border-green-500 peer-checked:text-green-600 text-sm font-medium">화분/용품</div>
+                    </label>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="category" value="정보공유" class="hidden peer">
+                        <div class="py-2 text-center border border-gray-200 rounded-lg peer-checked:bg-green-50 peer-checked:border-green-500 peer-checked:text-green-600 text-sm font-medium">정보공유</div>
+                    </label>
+                </div>
+            </div>
+
+            <div>
+                <label for="price" class="block text-sm font-bold text-gray-700 mb-2">가격 (원)</label>
+                <div class="relative">
+                    <input type="number" id="price" placeholder="가격을 입력하세요" 
+                           class="w-full px-4 py-3 rounded-xl border border-gray-200 input-focus">
+                    <div class="absolute right-4 top-3 flex items-center">
+                        <input type="checkbox" id="isFree" onchange="togglePrice(this)" class="mr-2 h-4 w-4 rounded border-gray-300 text-green-600">
+                        <label for="isFree" class="text-sm text-gray-500">나눔</label>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <label for="description" class="block text-sm font-bold text-gray-700 mb-2">자세한 설명</label>
+                <textarea id="description" rows="5" required placeholder="식물의 상태 등 정보를 적어주세요." 
+                          class="w-full px-4 py-3 rounded-xl border border-gray-200 input-focus"></textarea>
+            </div>
+
+            <div>
+                <label for="location" class="block text-sm font-bold text-gray-700 mb-2">거래 희망 지역</label>
+                <input type="text" id="location" required placeholder="예: 부산 해운대구 우동" 
+                       class="w-full px-4 py-3 rounded-xl border border-gray-200 input-focus">
+            </div>
+
+            <div class="pt-4">
+                <button type="submit" id="submitBtn" class="btn-submit w-full py-4 text-white font-bold rounded-xl shadow-lg text-lg">
+                    작성 완료하기
+                </button>
+            </div>
+        </form>
+    </main>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
+            authDomain: "plantiaworld.firebaseapp.com",
+            projectId: "plantiaworld",
+            storageBucket: "plantiaworld.appspot.com",
+            messagingSenderId: "18112813073",
+            appId: "1:18112813073:web:7247046c038a3831db79b0"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        let currentUser = null;
+        let uploadedImages = [];
+
+        // 로그인 상태 체크
+        onAuthStateChanged(auth, (user) => {
+            if (!user) {
+                alert("로그인이 필요한 서비스입니다.");
+                location.href = "login.html";
+            }
+            currentUser = user;
+        });
+
+        // 이미지 업로드 핸들러 (사용자님 코드 유지 및 보완)
+        window.handleImageUpload = function(input) {
+            const files = Array.from(input.files);
+            if (uploadedImages.length + files.length > 8) {
+                alert("사진은 최대 8장까지만 가능합니다.");
+                return;
+            }
+
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = function() {
+                        const canvas = document.createElement('canvas');
+                        let width = img.width;
+                        let height = img.height;
+                        const max_size = 600; // 서버 부하를 줄이기 위해 조금 더 축소
+
+                        if (width > height) {
+                            if (width > max_size) { height *= max_size / width; width = max_size; }
+                        } else {
+                            if (height > max_size) { width *= max_size / height; height = max_size; }
+                        }
+
+                        canvas.width = width; canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        const compressedData = canvas.toDataURL('image/jpeg', 0.6); // 품질 0.6
+                        uploadedImages.push(compressedData);
+                        updatePreview();
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        };
+
+        function updatePreview() {
+            const listElement = document.getElementById('imagePreviewList');
+            listElement.innerHTML = uploadedImages.map((src, i) => `
+                <div class="preview-item">
+                    <img src="${src}">
+                    <button type="button" onclick="removeImage(${i})" class="delete-btn"><i class="fas fa-times"></i></button>
+                </div>
+            `).join('');
+            document.getElementById('imageCountText').innerText = `${uploadedImages.length}/8`;
+        }
+
+        window.removeImage = function(index) {
+            uploadedImages.splice(index, 1);
+            updatePreview();
+        };
+
+        window.togglePrice = function(checkbox) {
+            const priceInput = document.getElementById('price');
+            priceInput.value = checkbox.checked ? 0 : "";
+            priceInput.readOnly = checkbox.checked;
+        };
+
+        // 폼 제출 (Firebase 저장)
+        document.getElementById('productForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const submitBtn = document.getElementById('submitBtn');
+
+            if (uploadedImages.length === 0) {
+                alert("사진을 한 장 이상 올려주세요.");
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.innerText = "등록 중...";
+
+            try {
+                await addDoc(collection(db, "products"), {
+                    title: document.getElementById('title').value,
+                    category: document.querySelector('input[name="category"]:checked').value,
+                    price: Number(document.getElementById('price').value),
+                    description: document.getElementById('description').value,
+                    location: document.getElementById('location').value,
+                    images: uploadedImages, // Base64로 저장
+                    sellerId: currentUser.uid,
+                    sellerName: currentUser.displayName || currentUser.email.split('@')[0],
+                    createdAt: serverTimestamp(),
+                    status: "판매중"
+                });
+
+                alert("🌱 식물이 성공적으로 등록되었습니다!");
+                location.href = "index.html";
+            } catch (err) {
+                console.error("등록 에러:", err);
+                alert("등록에 실패했습니다. 다시 시도해 주세요.");
+                submitBtn.disabled = false;
+                submitBtn.innerText = "작성 완료하기";
+            }
+        });
+    </script>
+</body>
+</html>
