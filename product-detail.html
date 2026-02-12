@@ -6,690 +6,1395 @@
     <title>식물 상세 정보 - PlantiaWorld</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
-    <!-- Firebase SDK -->
-       <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-       <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-       <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-    
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
-        body { 
-            font-family: 'Noto Sans KR', sans-serif; 
-            background: linear-gradient(135deg, #f8fdf8 0%, #e8f5e9 100%);
-            min-height: 100vh;
-        }
-        .slider-container { 
-            position: relative; 
-            overflow: hidden; 
-            background: #f3f4f6; 
-            aspect-ratio: 1 / 1; 
-            max-height: 70vh;
-        }
-        .slider-wrapper { 
-            display: flex; 
-            transition: transform 0.3s ease-out; 
-            height: 100%; 
-        }
-        .slider-item { 
-            min-width: 100%; 
-            height: 100%; 
-            object-fit: cover;
-            background-color: #e5e7eb;
-        }
-        .indicator { 
-            position: absolute; 
-            bottom: 16px; 
-            left: 50%; 
-            transform: translateX(-50%); 
-            display: flex; 
-            gap: 8px; 
-            z-index: 10;
-        }
-        .dot { 
-            width: 8px; 
-            height: 8px; 
-            border-radius: 50%; 
-            background: rgba(255,255,255,0.5); 
-            transition: 0.3s; 
-            cursor: pointer;
-        }
-        .dot.active { 
-            background: #fff; 
-            width: 20px; 
-            border-radius: 4px; 
-        }
-        .floating-bottom { 
-            position: fixed; 
-            bottom: 0; 
-            left: 0; 
-            right: 0; 
-            background: white; 
-            border-top: 1px solid #e5e7eb; 
-            padding: 16px; 
-            z-index: 50; 
-            box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
-        }
-        .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .badge-sold { background: #dc2626; color: white; }
-        .badge-free { background: #10b981; color: white; }
-        .badge-reserved { background: #f59e0b; color: white; }
-        
-        .loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-        }
-        
-        .loading-spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #10b981;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 16px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .seller-info {
-            background: white;
-            border-radius: 16px;
-            padding: 16px;
-            margin: 16px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        }
-        
-        .product-status {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 10;
-        }
-    </style>
-</head>
-<body class="pb-24">
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { 
+            getAuth, 
+            onAuthStateChanged 
+        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            getDoc, 
+            setDoc,
+            updateDoc,
+            deleteDoc,
+            increment,
+            arrayUnion,
+            arrayRemove,
+            onSnapshot,
+            collection,
+            query,
+            where,
+            getDocs,
+            limit,
+            addDoc,
+            serverTimestamp
+        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-    <!-- 헤더 -->
-    <header class="fixed top-0 left-0 right-0 z-50 flex justify-between p-4 items-center bg-white/80 backdrop-blur-sm">
-        <button onclick="goBack()" class="w-10 h-10 bg-white/90 backdrop-blur rounded-full shadow flex items-center justify-center hover:bg-gray-50 transition">
-            <i class="fas fa-arrow-left text-gray-800"></i>
-        </button>
-        <div class="flex gap-2">
-            <button onclick="shareLink()" class="w-10 h-10 bg-white/90 backdrop-blur rounded-full shadow flex items-center justify-center hover:bg-gray-50 transition">
-                <i class="fas fa-share-alt text-gray-800"></i>
-            </button>
-            <button onclick="toggleLike()" class="w-10 h-10 bg-white/90 backdrop-blur rounded-full shadow flex items-center justify-center hover:bg-gray-50 transition">
-                <i id="likeIcon" class="far fa-heart text-gray-800"></i>
-            </button>
-        </div>
-    </header>
-
-    <!-- 로딩 화면 -->
-    <div id="loading" class="loading">
-        <div class="loading-spinner"></div>
-        <p class="text-gray-500">상품을 불러오는 중...</p>
-    </div>
-
-    <!-- 메인 콘텐츠 -->
-    <main id="content" class="hidden">
-        <!-- 이미지 슬라이더 -->
-        <div class="slider-container">
-            <div id="sliderWrapper" class="slider-wrapper"></div>
-            <div id="sliderIndicator" class="indicator"></div>
-            
-            <!-- 상품 상태 배지 -->
-            <div id="productStatus" class="product-status"></div>
-        </div>
-
-        <!-- 판매자 정보 -->
-        <div class="seller-info">
-            <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center gap-3">
-                    <div id="sellerAvatar" class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center text-green-600">
-                        <i class="fas fa-user text-xl"></i>
-                    </div>
-                    <div>
-                        <h3 id="sellerName" class="font-bold text-gray-800">초록이웃</h3>
-                        <p id="productLocation" class="text-xs text-gray-500"></p>
-                    </div>
-                </div>
-                <div class="text-right">
-                    <span class="inline-block px-3 py-1 bg-green-50 text-green-600 rounded-full text-xs font-bold">매너온도 37.5°C</span>
-                    <p class="text-xs text-gray-400 mt-1">1시간 내 응답</p>
-                </div>
-            </div>
-            <hr class="border-gray-100 my-4">
-            
-            <!-- 상품 정보 -->
-            <div class="mb-6">
-                <h2 id="productTitle" class="text-2xl font-bold text-gray-900 mb-2"></h2>
-                <div class="flex gap-2 text-sm text-gray-400 mb-4">
-                    <span id="productCategory" class="bg-green-50 text-green-600 px-2 py-1 rounded-full"></span>
-                    <span>•</span>
-                    <span id="productDate" class="text-gray-400"></span>
-                </div>
-                
-                <div class="mb-6">
-                    <p id="productDescription" class="text-gray-700 leading-relaxed whitespace-pre-wrap"></p>
-                </div>
-                
-                <!-- 추가 정보 -->
-                <div class="grid grid-cols-2 gap-4 mb-6">
-                    <div class="bg-gray-50 p-3 rounded-lg">
-                        <p class="text-xs text-gray-500 mb-1">거래희망장소</p>
-                        <p id="tradeLocation" class="font-medium">문의</p>
-                    </div>
-                    <div class="bg-gray-50 p-3 rounded-lg">
-                        <p class="text-xs text-gray-500 mb-1">상태</p>
-                        <p id="productCondition" class="font-medium">좋음</p>
-                    </div>
-                </div>
-                
-                <!-- 조회수 & 좋아요 -->
-                <div class="flex gap-4 text-sm text-gray-400">
-                    <span><i class="far fa-eye mr-1"></i><span id="viewCount">12</span> 조회</span>
-                    <span>•</span>
-                    <span><i class="far fa-heart mr-1"></i><span id="likeCount">0</span> 관심</span>
-                </div>
-            </div>
-        </div>
-        
-        <!-- 상품 ID (디버깅용) -->
-        <div class="px-5 text-xs text-gray-400 text-center mt-4">
-            상품 ID: <span id="debugProductId"></span>
-        </div>
-    </main>
-
-    <!-- 하단 고정 바 -->
-    <div class="floating-bottom">
-        <div class="max-w-2xl mx-auto flex items-center justify-between">
-            <div class="flex items-center gap-4">
-                <div>
-                    <p id="productPrice" class="text-xl font-bold text-gray-900"></p>
-                    <p id="priceInfo" class="text-xs text-green-600 font-bold"></p>
-                </div>
-            </div>
-            <div class="flex gap-2">
-                <button id="actionBtn" onclick="handleAction()" 
-                        class="bg-green-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-green-700 transition whitespace-nowrap">
-                    채팅하기
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // ========== Firebase 초기화 ==========
         const firebaseConfig = {
-            apiKey: "AIzaSyA8W_2h3oI9S21-hoXKYBKs7rbdo86n6dc",
-            authDomain: "plantiaworld.firebaseapp.com",
-            projectId: "plantiaworld",
-            storageBucket: "plantiaworld.firebasestorage.app",
-            messagingSenderId: "18112813073",
-            appId: "1:18112813073:web:7247046c038a3831db79b",
-            measurementId: "G-8XSZM279KY"
+           apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
+           authDomain: "plantiaworld.firebaseapp.com",
+           projectId: "plantiaworld",
+           storageBucket: "plantiaworld.firebasestorage.app",
+           messagingSenderId: "18112813073",
+           appId: "1:18112813073:web:7247046c038a3831db79b0",
+           measurementId: "G-8XSSM279KY"
         };
 
-        let db, auth;
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // ========== 전역 변수 ==========
+        let currentUser = null;
         let currentProduct = null;
+        let productId = null;
+        let currentSlideIndex = 0;
+        let map = null;
+        let mapMarker = null;
+        let isDataLoaded = false;
         let unsubscribeProduct = null;
-        
-        // ========== 페이지 초기화 ==========
-        document.addEventListener('DOMContentLoaded', async () => {
-            console.log('상세 페이지 로드 시작');
+
+        window.firebaseModules = { db, auth };
+
+        // ========== URL에서 상품 ID 가져오기 ==========
+        const urlParams = new URLSearchParams(window.location.search);
+        productId = urlParams.get('id');
+
+        if (!productId) {
+            alert('상품 ID가 없습니다.');
+            window.location.href = 'index.html';
+            throw new Error('No product ID');
+        }
+
+        console.log('🔍 상품 ID:', productId);
+
+        // ========== 유틸리티 함수 ==========
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatDate(timestamp) {
+            if (!timestamp) return '방금 전';
+            try {
+                const date = timestamp.seconds ? new Date(timestamp.seconds * 1000) : new Date(timestamp);
+                const now = new Date();
+                const diff = Math.floor((now - date) / 1000);
+                
+                if (diff < 60) return '방금 전';
+                if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+                if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+                if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+                return date.toLocaleDateString('ko-KR');
+            } catch (error) {
+                console.error('날짜 포맷 오류:', error);
+                return '알 수 없음';
+            }
+        }
+
+        function showToast(message, type = 'success') {
+            const existingToast = document.querySelector('.toast');
+            if (existingToast) existingToast.remove();
+            
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `
+                <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'} mr-2"></i>
+                ${escapeHtml(message)}
+            `;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // ========== 인증 상태 확인 ==========
+        onAuthStateChanged(auth, async (user) => {
+            currentUser = user;
+            
+            if (user) {
+                console.log('✅ 로그인된 사용자:', user.uid);
+            } else {
+                console.log('👤 비로그인 상태');
+            }
+            
+            if (!isDataLoaded) {
+                await loadProductDetail();
+                isDataLoaded = true;
+            } else {
+                if (currentProduct) {
+                    updateOwnerActions();
+                    updateLikeButton(currentProduct);
+                }
+            }
+        });
+
+        // ========== 페이지 언로드 시 리스너 해제 ==========
+        window.addEventListener('beforeunload', () => {
+            if (unsubscribeProduct) {
+                unsubscribeProduct();
+            }
+        });
+
+        // ========== 상품 상세 정보 로드 ==========
+        async function loadProductDetail() {
+            try {
+                const productRef = doc(db, 'products', productId);
+                let hasIncrementedView = false;
+                
+                console.log('📥 상품 로드 시작...');
+                
+                unsubscribeProduct = onSnapshot(productRef, async (snapshot) => {
+                    if (snapshot.exists()) {
+                        const prevProduct = currentProduct;
+                        currentProduct = { id: snapshot.id, ...snapshot.data() };
+                        
+                        console.log('✅ 상품 데이터:', currentProduct);
+                        
+                        // 조회수 증가 (최초 한 번만)
+                        if (!hasIncrementedView && !sessionStorage.getItem(`viewed_${productId}`)) {
+                            hasIncrementedView = true;
+                            try {
+                                await updateDoc(productRef, { views: increment(1) });
+                                sessionStorage.setItem(`viewed_${productId}`, 'true');
+                                console.log('👁️ 조회수 증가 완료');
+                            } catch (error) {
+                                console.error('❌ 조회수 증가 오류:', error);
+                            }
+                        }
+                        
+                        // UI 업데이트
+                        updateProductUI(currentProduct);
+                        
+                        // 판매자 정보 로드
+                        if (!prevProduct || prevProduct.sellerId !== currentProduct.sellerId) {
+                            console.log('👤 판매자 정보 로드 시작:', currentProduct.sellerId);
+                            await loadSellerInfo(currentProduct.sellerId);
+                            await loadSellerOtherProducts(currentProduct.sellerId);
+                        }
+                        
+                        // 유사 상품 로드
+                        if (!prevProduct) {
+                            await loadSimilarProducts();
+                        }
+                        
+                        // 로딩 화면 숨김
+                        const loadingScreen = document.getElementById('loadingScreen');
+                        if (loadingScreen) {
+                            loadingScreen.classList.add('hidden');
+                        }
+                    } else {
+                        console.error('❌ 상품을 찾을 수 없습니다');
+                        showProductNotFound();
+                    }
+                }, (error) => {
+                    console.error('❌ 실시간 리스너 오류:', error);
+                    showProductNotFound();
+                });
+                
+            } catch (error) {
+                console.error('❌ 상품 로드 오류:', error);
+                showProductNotFound();
+            }
+        }
+
+        // ========== UI 업데이트 ==========
+        function updateProductUI(product) {
+            if (!product) return;
+            
+            console.log('🎨 UI 업데이트 시작');
+            
+            // 제목과 설명
+            const titleEl = document.getElementById('productTitle');
+            const descEl = document.getElementById('productDescription');
+            const categoryEl = document.getElementById('productCategory');
+            const dateEl = document.getElementById('productDate');
+            
+            if (titleEl) titleEl.textContent = product.title || '제목 없음';
+            if (descEl) descEl.textContent = product.description || '상품 설명이 없습니다.';
+            if (categoryEl) categoryEl.textContent = product.category || '기타';
+            if (dateEl) dateEl.textContent = formatDate(product.createdAt || product.createdDate);
+            
+            // 가격
+            const priceEl = document.getElementById('productPrice');
+            const priceInfoEl = document.getElementById('priceInfo');
+            const price = product.price || 0;
+            
+            if (priceEl && priceInfoEl) {
+                if (price === 0) {
+                    priceEl.textContent = '나눔 🌱';
+                    priceEl.className = 'text-2xl font-bold text-green-600';
+                    priceInfoEl.textContent = '무료 나눔';
+                } else {
+                    priceEl.textContent = price.toLocaleString() + '원';
+                    priceEl.className = 'text-2xl font-bold text-gray-900';
+                    priceInfoEl.textContent = '가격 협의 가능';
+                }
+            }
+            
+            // 상태 배지
+            const statusBadge = document.getElementById('statusBadge');
+            if (statusBadge) {
+                const status = product.status || '판매중';
+                statusBadge.textContent = status;
+                
+                let badgeClass = 'px-3 py-1 rounded-full text-sm font-bold ';
+                switch(status) {
+                    case '판매중':
+                        badgeClass += 'bg-blue-100 text-blue-800';
+                        break;
+                    case '예약중':
+                        badgeClass += 'bg-orange-100 text-orange-800';
+                        break;
+                    case '판매완료':
+                        badgeClass += 'bg-red-100 text-red-800';
+                        break;
+                    default:
+                        badgeClass += 'bg-gray-100 text-gray-800';
+                }
+                statusBadge.className = badgeClass;
+            }
+            
+            // 통계
+            const viewCountEl = document.getElementById('viewCount');
+            const likeCountEl = document.getElementById('likeCount');
+            const chatCountEl = document.getElementById('chatCount');
+            
+            if (viewCountEl) viewCountEl.textContent = (product.views || 0).toLocaleString();
+            if (likeCountEl) likeCountEl.textContent = (product.likes?.length || 0).toLocaleString();
+            if (chatCountEl) chatCountEl.textContent = (product.chatCount || 0).toLocaleString();
+            
+            // 위치 정보
+            const locationEl = document.getElementById('productLocation');
+            if (locationEl) {
+                const location = product.sellerLocation || product.location?.address || product.location || '위치 정보 없음';
+                locationEl.textContent = typeof location === 'string' ? location : '위치 정보 없음';
+            }
+            
+            // 이미지 슬라이더
+            updateImageSlider(product.images || []);
+            
+            // 소유자 액션
+            updateOwnerActions();
+            
+            // 좋아요 버튼
+            updateLikeButton(product);
+            
+            // 지도 표시 (다양한 필드명 지원)
+            const tradeLocation = product.tradeLocation || product.location;
+            if (tradeLocation) {
+                const lat = tradeLocation.lat || tradeLocation.latitude;
+                const lng = tradeLocation.lng || tradeLocation.longitude;
+                
+                if (lat && lng) {
+                    console.log('🗺️ 지도 표시:', { lat, lng });
+                    setTimeout(() => initializeMap({ lat, lng, address: tradeLocation.address }), 300);
+                } else {
+                    console.log('⚠️ 지도 좌표 없음');
+                    const mapContainer = document.getElementById('mapContainer');
+                    if (mapContainer) mapContainer.classList.add('hidden');
+                }
+            } else {
+                const mapContainer = document.getElementById('mapContainer');
+                if (mapContainer) mapContainer.classList.add('hidden');
+            }
+            
+            console.log('✅ UI 업데이트 완료');
+        }
+
+        // ========== 이미지 슬라이더 업데이트 ==========
+        function updateImageSlider(images) {
+            const container = document.getElementById('imageSlider');
+            const indicators = document.getElementById('indicators');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            
+            if (!container) return;
+            
+            currentSlideIndex = 0;
+            
+            if (!images || images.length === 0) {
+                container.innerHTML = `
+                    <div class="w-full h-full flex items-center justify-center bg-gray-100">
+                        <i class="fas fa-leaf text-6xl text-gray-300"></i>
+                    </div>
+                `;
+                if (indicators) indicators.innerHTML = '';
+                if (prevBtn) prevBtn.style.display = 'none';
+                if (nextBtn) nextBtn.style.display = 'none';
+                return;
+            }
+            
+            container.innerHTML = images.map((img, idx) => `
+                <div class="slide ${idx === 0 ? 'active' : ''}" style="background-image: url('${escapeHtml(img)}')"></div>
+            `).join('');
+            
+            if (indicators) {
+                indicators.innerHTML = images.map((_, idx) => `
+                    <span class="indicator ${idx === 0 ? 'active' : ''}" onclick="goToSlide(${idx})"></span>
+                `).join('');
+            }
+            
+            if (prevBtn) prevBtn.style.display = images.length > 1 ? 'flex' : 'none';
+            if (nextBtn) nextBtn.style.display = images.length > 1 ? 'flex' : 'none';
+            
+            console.log('📷 이미지 슬라이더 업데이트:', images.length, '개');
+        }
+
+        // ========== 슬라이더 네비게이션 ==========
+        window.prevSlide = function() {
+            const slides = document.querySelectorAll('.slide');
+            const indicators = document.querySelectorAll('.indicator');
+            if (slides.length === 0) return;
+            
+            currentSlideIndex = (currentSlideIndex - 1 + slides.length) % slides.length;
+            
+            slides.forEach((slide, idx) => {
+                slide.classList.toggle('active', idx === currentSlideIndex);
+            });
+            indicators.forEach((ind, idx) => {
+                ind.classList.toggle('active', idx === currentSlideIndex);
+            });
+        };
+
+        window.nextSlide = function() {
+            const slides = document.querySelectorAll('.slide');
+            const indicators = document.querySelectorAll('.indicator');
+            if (slides.length === 0) return;
+            
+            currentSlideIndex = (currentSlideIndex + 1) % slides.length;
+            
+            slides.forEach((slide, idx) => {
+                slide.classList.toggle('active', idx === currentSlideIndex);
+            });
+            indicators.forEach((ind, idx) => {
+                ind.classList.toggle('active', idx === currentSlideIndex);
+            });
+        };
+
+        window.goToSlide = function(index) {
+            const slides = document.querySelectorAll('.slide');
+            const indicators = document.querySelectorAll('.indicator');
+            
+            currentSlideIndex = index;
+            
+            slides.forEach((slide, idx) => {
+                slide.classList.toggle('active', idx === currentSlideIndex);
+            });
+            indicators.forEach((ind, idx) => {
+                ind.classList.toggle('active', idx === currentSlideIndex);
+            });
+        };
+
+        // ========== 판매자 정보 로드 (개선됨) ==========
+        async function loadSellerInfo(sellerId) {
+            console.log('👤 판매자 정보 로드:', sellerId);
+            
+            const sellerNameEl = document.getElementById('sellerName');
+            const sellerAvatarEl = document.getElementById('sellerAvatar');
+            const sellerJoinDateEl = document.getElementById('sellerJoinDate');
+            
+            if (!sellerId) {
+                console.warn('⚠️ 판매자 ID 없음');
+                if (sellerNameEl) sellerNameEl.textContent = '알 수 없는 판매자';
+                if (sellerAvatarEl) sellerAvatarEl.src = 'https://via.placeholder.com/50?text=?';
+                if (sellerJoinDateEl) sellerJoinDateEl.textContent = '-';
+                return;
+            }
             
             try {
-                // Firebase 초기화
-                if (!firebase.apps.length) {
-                    firebase.initializeApp(firebaseConfig);
+                const userRef = doc(db, 'users', sellerId);
+                const userSnap = await getDoc(userRef);
+                
+                if (userSnap.exists()) {
+                    const seller = userSnap.data();
+                    console.log('✅ 판매자 정보 로드 성공:', seller);
+                    
+                    if (sellerNameEl) {
+                        sellerNameEl.textContent = seller.displayName || seller.nickname || seller.name || '사용자';
+                    }
+                    
+                    if (sellerAvatarEl) {
+                        sellerAvatarEl.src = seller.photoURL || 'https://via.placeholder.com/50?text=' + (seller.displayName?.[0] || '?');
+                        sellerAvatarEl.onerror = () => {
+                            sellerAvatarEl.src = 'https://via.placeholder.com/50?text=?';
+                        };
+                    }
+                    
+                    if (sellerJoinDateEl) {
+                        const joinDate = seller.createdAt 
+                            ? new Date(seller.createdAt.seconds * 1000).toLocaleDateString('ko-KR')
+                            : '-';
+                        sellerJoinDateEl.textContent = joinDate;
+                    }
+                } else {
+                    console.warn('⚠️ 판매자 정보 없음 (탈퇴한 사용자일 수 있음)');
+                    if (sellerNameEl) sellerNameEl.textContent = '탈퇴한 사용자';
+                    if (sellerAvatarEl) sellerAvatarEl.src = 'https://via.placeholder.com/50?text=X';
+                    if (sellerJoinDateEl) sellerJoinDateEl.textContent = '-';
                 }
+            } catch (error) {
+                console.error('❌ 판매자 정보 로드 오류:', error);
+                if (sellerNameEl) sellerNameEl.textContent = '정보를 불러올 수 없음';
+                if (sellerAvatarEl) sellerAvatarEl.src = 'https://via.placeholder.com/50?text=!';
+                if (sellerJoinDateEl) sellerJoinDateEl.textContent = '-';
+            }
+        }
+
+        // ========== 판매자 다른 상품 로드 ==========
+        async function loadSellerOtherProducts(sellerId) {
+            const container = document.getElementById('sellerOtherProducts');
+            if (!container || !sellerId) return;
+            
+            container.innerHTML = '<p class="col-span-full text-center text-gray-500">로딩 중...</p>';
+            
+            try {
+                const q = query(
+                    collection(db, 'products'),
+                    where('sellerId', '==', sellerId),
+                    where('status', '==', '판매중'),
+                    limit(5)
+                );
                 
-                db = firebase.firestore();
-                auth = firebase.auth();
+                const snapshot = await getDocs(q);
+                const products = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .filter(p => p.id !== productId);
                 
-                // URL에서 productId 가져오기
-                const urlParams = new URLSearchParams(window.location.search);
-                const productId = urlParams.get('id');
-                
-                if (!productId) {
-                    alert('상품 정보가 없습니다.');
-                    location.href = 'index.html';
+                if (products.length === 0) {
+                    container.innerHTML = '<p class="col-span-full text-center text-gray-500">등록된 상품이 없습니다</p>';
                     return;
                 }
                 
-                document.getElementById('debugProductId').textContent = productId;
-                
-                // Firestore에서 상품 데이터 로드
-                await loadProductFromFirestore(productId);
-                
-                // 조회수 증가
-                await incrementViewCount(productId);
-                
-                // 로딩 숨기기
-                document.getElementById('loading').classList.add('hidden');
-                document.getElementById('content').classList.remove('hidden');
-                
-            } catch (error) {
-                console.error('페이지 로드 오류:', error);
-                fallbackToLocalStorage();
-            }
-        });
-        
-        // ========== Firestore에서 상품 로드 ==========
-        async function loadProductFromFirestore(productId) {
-            try {
-                console.log('Firestore에서 상품 로드:', productId);
-                
-                // Firestore 리스너 설정
-                unsubscribeProduct = db.collection('products').doc(productId)
-                    .onSnapshot((doc) => {
-                        if (doc.exists) {
-                            const product = doc.data();
-                            product.id = doc.id;
-                            currentProduct = product;
-                            
-                            console.log('상품 데이터:', product);
-                            updateProductUI(product);
-                            
-                            // 로컬 스토리지에 저장 (오프라인용)
-                            saveToLocalStorage(product);
-                        } else {
-                            console.log('상품이 존재하지 않음');
-                            showProductNotFound();
-                        }
-                    }, (error) => {
-                        console.error('Firestore 리스너 오류:', error);
-                        fallbackToLocalStorage();
-                    });
+                container.innerHTML = products.map(product => {
+                    const image = product.images?.[0] || 'https://via.placeholder.com/200?text=No+Image';
+                    const price = product.price === 0 ? '나눔 🌱' : `${product.price.toLocaleString()}원`;
+                    const title = product.title || '제목 없음';
+                    const location = product.sellerLocation || product.location?.address || '지역 정보 없음';
                     
-            } catch (error) {
-                console.error('Firestore 로드 오류:', error);
-                fallbackToLocalStorage();
-            }
-        }
-        
-        // ========== UI 업데이트 ==========
-        function updateProductUI(product) {
-            // 기본 정보
-            document.getElementById('productTitle').textContent = product.title || '제목 없음';
-            document.getElementById('productCategory').textContent = product.category || '기타';
-            document.getElementById('productDescription').textContent = product.description || '상품 설명이 없습니다.';
-            
-            // 위치 정보
-            const location = product.sellerLocation || product.location || '지역 정보 없음';
-            document.getElementById('productLocation').textContent = location;
-            document.getElementById('tradeLocation').textContent = location;
-            
-            // 날짜 정보
-            const date = formatDate(product.createdAt || product.createdDate);
-            document.getElementById('productDate').textContent = date;
-            
-            // 가격 정보
-            const price = product.price || 0;
-            const priceElement = document.getElementById('productPrice');
-            const priceInfoElement = document.getElementById('priceInfo');
-            
-            if (price === 0) {
-                priceElement.textContent = '나눔 🌱';
-                priceElement.className = 'text-xl font-bold text-green-600';
-                priceInfoElement.textContent = '무료 나눔';
-            } else {
-                priceElement.textContent = price.toLocaleString() + '원';
-                priceElement.className = 'text-xl font-bold text-gray-900';
-                priceInfoElement.textContent = '가격 제안 불가';
-            }
-            
-            // 상태 정보
-            const statusElement = document.getElementById('productStatus');
-            const status = product.status || '판매중';
-            
-            statusElement.innerHTML = '';
-            if (status === '판매완료') {
-                statusElement.innerHTML = '<span class="badge badge-sold">판매완료</span>';
-                document.getElementById('actionBtn').textContent = '판매완료';
-                document.getElementById('actionBtn').className = 'bg-gray-400 text-white px-6 py-3 rounded-xl font-bold cursor-not-allowed';
-                document.getElementById('actionBtn').onclick = null;
-            } else if (status === '예약중') {
-                statusElement.innerHTML = '<span class="badge badge-reserved">예약중</span>';
-                document.getElementById('actionBtn').textContent = '예약 문의';
-            } else if (price === 0) {
-                statusElement.innerHTML = '<span class="badge badge-free">무료나눔</span>';
-                document.getElementById('actionBtn').textContent = '나눔 문의';
-            }
-            
-            // 좋아요 수
-            const likes = product.likes || 0;
-            document.getElementById('likeCount').textContent = likes;
-            
-            // 판매자 정보
-            document.getElementById('sellerName').textContent = product.sellerName || '초록이웃';
-            
-            // 이미지 슬라이더
-            updateImageSlider(product);
-            
-            // 내가 좋아요 했는지 확인
-            checkIfLiked(product.id);
-        }
-        
-        // ========== 이미지 슬라이더 업데이트 ==========
-        function updateImageSlider(product) {
-            const wrapper = document.getElementById('sliderWrapper');
-            const indicator = document.getElementById('sliderIndicator');
-            
-            wrapper.innerHTML = '';
-            indicator.innerHTML = '';
-            
-            // 이미지 배열 확인
-            const images = product.images || [];
-            let imageUrls = [];
-            
-            if (images.length > 0) {
-                imageUrls = images;
-            } else {
-                // 기본 이미지 생성
-                imageUrls = [
-                    `https://images.unsplash.com/photo-1416879595882-3373a0480b5b?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80&text=${encodeURIComponent(product.title || '식물')}`
-                ];
-            }
-            
-            // 이미지 추가
-            imageUrls.forEach((imgSrc, idx) => {
-                const img = document.createElement('img');
-                img.src = imgSrc;
-                img.className = 'slider-item';
-                img.alt = product.title || '식물 이미지';
-                img.onerror = function() {
-                    this.src = 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80';
-                };
-                wrapper.appendChild(img);
+                    return `
+                        <a href="product-detail.html?id=${product.id}" class="product-card">
+                            <div class="product-image" style="background-image: url('${escapeHtml(image)}')"></div>
+                            <div class="p-3">
+                                <h4 class="font-bold text-gray-800 mb-1 truncate">${escapeHtml(title)}</h4>
+                                <p class="text-green-600 font-bold">${price}</p>
+                                <p class="text-xs text-gray-500 mt-1">${escapeHtml(typeof location === 'string' ? location : '위치 정보 없음')}</p>
+                            </div>
+                        </a>
+                    `;
+                }).join('');
                 
-                const dot = document.createElement('div');
-                dot.className = `dot ${idx === 0 ? 'active' : ''}`;
-                dot.onclick = () => goToSlide(idx);
-                indicator.appendChild(dot);
-            });
-            
-            // 자동 슬라이드 설정 (이미지가 2개 이상일 때)
-            if (imageUrls.length > 1) {
-                startAutoSlide();
+                console.log('✅ 판매자 상품 로드 완료:', products.length, '개');
+            } catch (error) {
+                console.error('❌ 판매자 상품 로드 오류:', error);
+                container.innerHTML = '<p class="col-span-full text-center text-red-500">로드 실패</p>';
             }
         }
-        
-        // ========== 슬라이드 기능 ==========
-        let currentSlide = 0;
-        let slideInterval = null;
-        
-        function goToSlide(index) {
-            const wrapper = document.getElementById('sliderWrapper');
-            const dots = document.querySelectorAll('.dot');
+
+        // ========== 유사 상품 로드 ==========
+        async function loadSimilarProducts() {
+            const container = document.getElementById('similarProducts');
+            if (!container) return;
             
-            currentSlide = index;
-            wrapper.style.transform = `translateX(-${currentSlide * 100}%)`;
+            container.innerHTML = '<p class="col-span-full text-center text-gray-500">로딩 중...</p>';
             
-            dots.forEach((dot, i) => {
-                dot.classList.toggle('active', i === currentSlide);
-            });
+            try {
+                const q = query(
+                    collection(db, 'products'),
+                    where('category', '==', currentProduct.category || '기타'),
+                    where('status', '==', '판매중'),
+                    limit(9)
+                );
+                
+                const snapshot = await getDocs(q);
+                const products = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .filter(p => p.id !== productId);
+                
+                if (products.length === 0) {
+                    container.innerHTML = '<p class="col-span-full text-center text-gray-500">추천 상품이 없습니다</p>';
+                    return;
+                }
+                
+                container.innerHTML = products.slice(0, 8).map(product => {
+                    const image = product.images?.[0] || 'https://via.placeholder.com/200?text=No+Image';
+                    const price = product.price === 0 ? '나눔 🌱' : `${product.price.toLocaleString()}원`;
+                    const title = product.title || '제목 없음';
+                    const location = product.sellerLocation || product.location?.address || '지역 정보 없음';
+                    
+                    return `
+                        <a href="product-detail.html?id=${product.id}" class="product-card">
+                            <div class="product-image" style="background-image: url('${escapeHtml(image)}')"></div>
+                            <div class="p-3">
+                                <h4 class="font-bold text-gray-800 mb-1 truncate">${escapeHtml(title)}</h4>
+                                <p class="text-green-600 font-bold">${price}</p>
+                                <p class="text-xs text-gray-500 mt-1">${escapeHtml(typeof location === 'string' ? location : '위치 정보 없음')}</p>
+                            </div>
+                        </a>
+                    `;
+                }).join('');
+                
+                console.log('✅ 유사 상품 로드 완료:', products.length, '개');
+            } catch (error) {
+                console.error('❌ 유사 상품 로드 오류:', error);
+                container.innerHTML = '<p class="col-span-full text-center text-red-500">로드 실패</p>';
+            }
         }
-        
-        function startAutoSlide() {
-            if (slideInterval) clearInterval(slideInterval);
-            
-            slideInterval = setInterval(() => {
-                const dots = document.querySelectorAll('.dot');
-                currentSlide = (currentSlide + 1) % dots.length;
-                goToSlide(currentSlide);
-            }, 4000);
-        }
-        
-        // ========== 좋아요 기능 ==========
-        async function toggleLike() {
-            const user = auth.currentUser;
-            if (!user) {
-                alert('로그인이 필요합니다.');
-                location.href = 'login.html?returnUrl=' + encodeURIComponent(window.location.href);
+
+        // ========== 지도 초기화 ==========
+        function initializeMap(location) {
+            if (!location || !location.lat || !location.lng) {
+                console.warn('⚠️ 지도 좌표 없음');
                 return;
             }
             
-            const productId = currentProduct.id;
-            const userId = user.uid;
-            const likeRef = db.collection('likes').doc(`${userId}_${productId}`);
-            
             try {
-                const likeDoc = await likeRef.get();
-                const productRef = db.collection('products').doc(productId);
+                const mapContainer = document.getElementById('mapContainer');
+                const mapDiv = document.getElementById('tradeMap');
                 
-                if (likeDoc.exists) {
-                    // 좋아요 취소
-                    await likeRef.delete();
-                    await productRef.update({
-                        likes: firebase.firestore.FieldValue.increment(-1)
-                    });
-                    
-                    document.getElementById('likeIcon').className = 'far fa-heart text-gray-800';
+                if (!mapContainer || !mapDiv) {
+                    console.warn('⚠️ 지도 엘리먼트 없음');
+                    return;
+                }
+                
+                mapContainer.classList.remove('hidden');
+                
+                if (!map) {
+                    console.log('🗺️ 지도 최초 생성');
+                    map = L.map('tradeMap').setView([location.lat, location.lng], 15);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(map);
                 } else {
-                    // 좋아요 추가
-                    await likeRef.set({
-                        userId: userId,
-                        productId: productId,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                    
-                    await productRef.update({
-                        likes: firebase.firestore.FieldValue.increment(1)
-                    });
-                    
-                    document.getElementById('likeIcon').className = 'fas fa-heart text-red-500';
+                    console.log('🗺️ 지도 위치 업데이트');
+                    map.setView([location.lat, location.lng], 15);
                 }
+                
+                // 기존 마커 제거
+                if (mapMarker) {
+                    map.removeLayer(mapMarker);
+                }
+                
+                // 새 마커 추가
+                mapMarker = L.marker([location.lat, location.lng]).addTo(map)
+                    .bindPopup(escapeHtml(location.address || '거래 희망 장소'))
+                    .openPopup();
+                
+                // 지도 크기 재조정
+                setTimeout(() => {
+                    if (map) map.invalidateSize();
+                }, 100);
+                
+                console.log('✅ 지도 초기화 완료');
             } catch (error) {
-                console.error('좋아요 오류:', error);
-                alert('좋아요 처리 중 오류가 발생했습니다.');
+                console.error('❌ 지도 초기화 오류:', error);
             }
         }
-        
-        async function checkIfLiked(productId) {
-            const user = auth.currentUser;
-            if (!user) return;
+
+        // ========== 좋아요 기능 ==========
+        function updateLikeButton(product) {
+            const likeIcon = document.getElementById('likeIcon');
+            if (!likeIcon || !product) return;
             
-            const likeRef = db.collection('likes').doc(`${user.uid}_${productId}`);
+            const isLiked = currentUser && product.likes?.includes(currentUser.uid);
+            likeIcon.className = isLiked 
+                ? 'fas fa-heart text-red-500 text-xl' 
+                : 'far fa-heart text-gray-600 text-xl';
+        }
+
+        window.toggleLike = async function() {
+            if (!currentUser) {
+                if (confirm('로그인이 필요합니다. 로그인 페이지로 이동하시겠습니까?')) {
+                    window.location.href = 'login.html';
+                }
+                return;
+            }
+            
+            if (!currentProduct) {
+                showToast('상품 정보를 불러올 수 없습니다', 'error');
+                return;
+            }
             
             try {
-                const likeDoc = await likeRef.get();
-                if (likeDoc.exists) {
-                    document.getElementById('likeIcon').className = 'fas fa-heart text-red-500';
+                const productRef = doc(db, 'products', productId);
+                const isLiked = currentProduct.likes?.includes(currentUser.uid);
+                
+                if (isLiked) {
+                    await updateDoc(productRef, {
+                        likes: arrayRemove(currentUser.uid)
+                    });
+                    showToast('관심 목록에서 제거했습니다');
+                } else {
+                    await updateDoc(productRef, {
+                        likes: arrayUnion(currentUser.uid)
+                    });
+                    showToast('관심 목록에 추가했습니다');
                 }
             } catch (error) {
-                console.error('좋아요 확인 오류:', error);
+                console.error('❌ 좋아요 오류:', error);
+                showToast('오류가 발생했습니다', 'error');
+            }
+        };
+
+        // ========== 소유자 액션 업데이트 ==========
+        function updateOwnerActions() {
+            const buyerActions = document.getElementById('buyerActions');
+            const ownerActions = document.getElementById('ownerActions');
+            
+            if (!buyerActions || !ownerActions || !currentProduct) return;
+            
+            const isOwner = currentUser && currentUser.uid === currentProduct.sellerId;
+            
+            if (isOwner) {
+                buyerActions.classList.add('hidden');
+                ownerActions.classList.remove('hidden');
+                console.log('👤 소유자 모드');
+            } else {
+                buyerActions.classList.remove('hidden');
+                ownerActions.classList.add('hidden');
+                console.log('👥 구매자 모드');
             }
         }
-        
-        // ========== 조회수 증가 ==========
-        async function incrementViewCount(productId) {
+
+        // ========== 채팅 시작 ==========
+        window.handleChatClick = async function() {
+            if (!currentUser) {
+                if (confirm('로그인이 필요합니다. 로그인 페이지로 이동하시겠습니까?')) {
+                    window.location.href = 'login.html';
+                }
+                return;
+            }
+            
+            if (!currentProduct) {
+                showToast('상품 정보를 불러올 수 없습니다', 'error');
+                return;
+            }
+            
+            if (currentUser.uid === currentProduct.sellerId) {
+                showToast('본인의 상품입니다', 'error');
+                return;
+            }
+            
             try {
-                const productRef = db.collection('products').doc(productId);
-                await productRef.update({
-                    views: firebase.firestore.FieldValue.increment(1)
+                showToast('채팅방을 준비 중입니다...', 'success');
+                
+                const chatId = [currentUser.uid, currentProduct.sellerId].sort().join('_');
+                const chatRef = doc(db, 'chats', chatId);
+                const chatSnap = await getDoc(chatRef);
+                
+                if (!chatSnap.exists()) {
+                    const chatData = {
+                        participants: [currentUser.uid, currentProduct.sellerId],
+                        buyerId: currentUser.uid,
+                        sellerId: currentProduct.sellerId,
+                        productId: currentProduct.id,
+                        productTitle: currentProduct.title || '제목 없음',
+                        productImage: currentProduct.images?.[0] || '',
+                        productPrice: currentProduct.price || 0,
+                        lastMessage: '',
+                        lastMessageTime: serverTimestamp(),
+                        unreadCount: {
+                            [currentUser.uid]: 0,
+                            [currentProduct.sellerId]: 0
+                        },
+                        createdAt: serverTimestamp(),
+                        updatedAt: serverTimestamp()
+                    };
+
+                    await setDoc(chatRef, chatData);
+                    console.log('✅ 새 채팅방 생성:', chatId);
+                    
+                    // 채팅 수 증가
+                    try {
+                        const productRef = doc(db, 'products', productId);
+                        await updateDoc(productRef, {
+                            chatCount: increment(1)
+                        });
+                    } catch (error) {
+                        console.error('채팅 수 증가 오류:', error);
+                    }
+                }
+                
+                // 채팅 페이지로 이동 (올바른 파일명)
+                window.location.href = `chat.html?id=${chatId}`;
+            } catch (error) {
+                console.error('❌ 채팅 시작 오류:', error);
+                showToast('채팅을 시작할 수 없습니다', 'error');
+            }
+        };
+
+        // ========== 상품 수정 (개선됨) ==========
+        window.editProduct = function() {
+            if (!currentProduct || !currentUser) {
+                showToast('권한이 없습니다', 'error');
+                return;
+            }
+            
+            if (currentUser.uid !== currentProduct.sellerId) {
+                showToast('수정 권한이 없습니다', 'error');
+                return;
+            }
+            
+            console.log('✏️ 수정 페이지로 이동:', productId);
+            
+            // URL 파라미터로 상품 ID 전달 (upload.html에서 처리)
+            window.location.href = `upload.html?edit=${productId}`;
+        };
+
+        // ========== 상품 삭제 ==========
+        window.deleteProduct = async function() {
+            if (!currentProduct || !currentUser) {
+                showToast('권한이 없습니다', 'error');
+                return;
+            }
+            
+            if (currentUser.uid !== currentProduct.sellerId) {
+                showToast('삭제 권한이 없습니다', 'error');
+                return;
+            }
+            
+            if (!confirm('정말 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
+            
+            try {
+                await deleteDoc(doc(db, 'products', productId));
+                showToast('상품이 삭제되었습니다');
+                setTimeout(() => {
+                    window.location.href = 'index.html';
+                }, 1500);
+            } catch (error) {
+                console.error('❌ 삭제 오류:', error);
+                showToast('삭제에 실패했습니다', 'error');
+            }
+        };
+
+        // ========== 상태 변경 ==========
+        window.openStatusModal = function() {
+            document.getElementById('statusModal').classList.remove('hidden');
+        };
+
+        window.closeStatusModal = function() {
+            document.getElementById('statusModal').classList.add('hidden');
+        };
+
+        window.changeStatus = async function(newStatus) {
+            if (!currentProduct) {
+                showToast('상품 정보를 불러올 수 없습니다', 'error');
+                return;
+            }
+            
+            try {
+                const productRef = doc(db, 'products', productId);
+                await updateDoc(productRef, {
+                    status: newStatus,
+                    updatedAt: serverTimestamp()
                 });
+                
+                closeStatusModal();
+                showToast(`상태가 "${newStatus}"(으)로 변경되었습니다`);
             } catch (error) {
-                console.error('조회수 증가 오류:', error);
+                console.error('❌ 상태 변경 오류:', error);
+                showToast('상태 변경에 실패했습니다', 'error');
             }
-        }
-        
-        // ========== 채팅/구매 기능 ==========
-        async function handleAction() {
-            const user = auth.currentUser;
-            if (!user) {
-                alert('로그인이 필요합니다.');
-                location.href = 'login.html?returnUrl=' + encodeURIComponent(window.location.href);
+        };
+
+        // ========== 신고 기능 ==========
+        window.openReportModal = function() {
+            if (!currentUser) {
+                if (confirm('로그인이 필요합니다. 로그인 페이지로 이동하시겠습니까?')) {
+                    window.location.href = 'login.html';
+                }
                 return;
             }
             
-            const status = currentProduct.status || '판매중';
-            
-            if (status === '판매완료') {
-                alert('이미 판매 완료된 상품입니다.');
+            document.getElementById('reportReason').value = '';
+            document.getElementById('reportDetails').value = '';
+            document.getElementById('reportModal').classList.remove('hidden');
+        };
+
+        window.closeReportModal = function() {
+            document.getElementById('reportModal').classList.add('hidden');
+        };
+
+        window.submitReport = async function() {
+            if (!currentUser || !currentProduct) {
+                showToast('정보를 불러올 수 없습니다', 'error');
                 return;
             }
             
-            // 채팅 시작
-            alert('채팅 기능이 준비 중입니다. 판매자에게 연락해주세요.\n\n' +
-                  '판매자: ' + (currentProduct.sellerName || '초록이웃') + '\n' +
-                  '상품: ' + currentProduct.title);
+            const reason = document.getElementById('reportReason').value;
+            const details = document.getElementById('reportDetails').value.trim();
             
-            // 채팅방 생성 로직 (구현 필요)
-            // const chatRef = db.collection('chats').add({
-            //     productId: currentProduct.id,
-            //     buyerId: user.uid,
-            //     sellerId: currentProduct.sellerId,
-            //     createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            // });
+            if (!reason) {
+                showToast('신고 사유를 선택해주세요', 'error');
+                return;
+            }
+            
+            if (!details) {
+                showToast('상세 내용을 입력해주세요', 'error');
+                return;
+            }
+            
+            try {
+                await addDoc(collection(db, 'reports'), {
+                    productId: productId,
+                    productTitle: currentProduct.title,
+                    reporterId: currentUser.uid,
+                    sellerId: currentProduct.sellerId,
+                    reason: reason,
+                    details: details,
+                    createdAt: serverTimestamp(),
+                    status: 'pending'
+                });
+                
+                closeReportModal();
+                showToast('신고가 접수되었습니다');
+            } catch (error) {
+                console.error('❌ 신고 오류:', error);
+                showToast('신고에 실패했습니다', 'error');
+            }
+        };
+
+        window.blockUser = async function() {
+            if (!currentUser || !currentProduct) {
+                showToast('정보를 불러올 수 없습니다', 'error');
+                return;
+            }
+            
+            if (!confirm('이 사용자의 게시글을 더 이상 보지 않으시겠습니까?')) return;
+            
+            try {
+                const userRef = doc(db, 'users', currentUser.uid);
+                await updateDoc(userRef, {
+                    blockedUsers: arrayUnion(currentProduct.sellerId)
+                });
+                
+                showToast('사용자를 차단했습니다');
+                setTimeout(() => window.location.href = 'index.html', 1500);
+            } catch (error) {
+                console.error('❌ 차단 오류:', error);
+                showToast('차단에 실패했습니다', 'error');
+            }
+        };
+
+        // ========== 상품을 찾을 수 없을 때 ==========
+        function showProductNotFound() {
+            const loadingScreen = document.getElementById('loadingScreen');
+            if (loadingScreen) {
+                loadingScreen.innerHTML = `
+                    <div class="text-center p-8">
+                        <i class="fas fa-exclamation-triangle text-6xl text-yellow-500 mb-4"></i>
+                        <h2 class="text-2xl font-bold text-gray-800 mb-2">상품을 찾을 수 없습니다</h2>
+                        <p class="text-gray-600 mb-6">삭제되었거나 존재하지 않는 상품입니다</p>
+                        <button onclick="window.location.href='index.html'" 
+                                class="bg-green-600 text-white px-6 py-3 rounded-xl hover:bg-green-700 transition">
+                            메인으로 돌아가기
+                        </button>
+                    </div>
+                `;
+                loadingScreen.classList.remove('hidden');
+            }
         }
-        
-        // ========== 기타 기능 ==========
-        function goBack() {
+
+        // ========== 뒤로가기 ==========
+        window.goBack = function() {
             if (window.history.length > 1) {
                 window.history.back();
             } else {
                 window.location.href = 'index.html';
             }
+        };
+    </script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        
-        function shareLink() {
-            const url = window.location.href;
-            const title = currentProduct?.title || 'PlantiaWorld 상품';
-            
-            if (navigator.share) {
-                navigator.share({
-                    title: title,
-                    text: 'PlantiaWorld에서 이 상품을 확인해보세요!',
-                    url: url,
-                });
-            } else {
-                navigator.clipboard.writeText(url).then(() => {
-                    alert('링크가 복사되었습니다!');
-                });
+
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding-bottom: 100px;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 로딩 화면 */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.98);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #e5e7eb;
+            border-top-color: #10b981;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 이미지 슬라이더 */
+        .image-slider-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            border-radius: 1rem;
+            overflow: hidden;
+            background: #f3f4f6;
+        }
+
+        .slide {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-size: cover;
+            background-position: center;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+
+        .slide.active {
+            opacity: 1;
+            z-index: 1;
+        }
+
+        .slider-btn {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255, 255, 255, 0.9);
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            transition: all 0.3s;
+        }
+
+        .slider-btn:hover {
+            background: white;
+            transform: translateY(-50%) scale(1.1);
+        }
+
+        .slider-btn.prev {
+            left: 10px;
+        }
+
+        .slider-btn.next {
+            right: 10px;
+        }
+
+        .indicators {
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            z-index: 10;
+        }
+
+        .indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.5);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .indicator.active {
+            background: white;
+            width: 30px;
+            border-radius: 5px;
+        }
+
+        /* 상품 카드 */
+        .product-card {
+            display: block;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .product-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        }
+
+        .product-image {
+            width: 100%;
+            padding-top: 100%;
+            background-size: cover;
+            background-position: center;
+            background-color: #f3f4f6;
+        }
+
+        /* 하단 고정 바 */
+        .floating-bottom {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            padding: 15px 20px;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+
+        /* 모달 */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            padding: 20px;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 20px;
+            max-width: 500px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        /* 지도 */
+        #tradeMap {
+            height: 300px;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* 토스트 */
+        .toast {
+            position: fixed;
+            bottom: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+            z-index: 3000;
+            display: flex;
+            align-items: center;
+            animation: slideUp 0.3s ease;
+            min-width: 250px;
+            justify-content: center;
+        }
+
+        .toast-success {
+            background: #10b981;
+        }
+
+        .toast-error {
+            background: #ef4444;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translate(-50%, 20px);
+                opacity: 0;
+            }
+            to {
+                transform: translate(-50%, 0);
+                opacity: 1;
             }
         }
-        
-        // ========== 유틸리티 함수 ==========
-        function formatDate(dateInput) {
-            if (!dateInput) return '방금 전';
+
+        /* 반응형 */
+        @media (max-width: 768px) {
+            .image-slider-container {
+                height: 300px;
+            }
             
-            try {
-                let date;
-                if (dateInput.toDate) {
-                    date = dateInput.toDate();
-                } else if (typeof dateInput === 'string') {
-                    date = new Date(dateInput);
-                } else if (dateInput instanceof Date) {
-                    date = dateInput;
-                } else {
-                    date = new Date(dateInput);
-                }
-                
-                const now = new Date();
-                const diffInMinutes = Math.floor((now - date) / (1000 * 60));
-                
-                if (diffInMinutes < 1) return '방금 전';
-                if (diffInMinutes < 60) return `${diffInMinutes}분 전`;
-                if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}시간 전`;
-                if (diffInMinutes < 10080) return `${Math.floor(diffInMinutes / 1440)}일 전`;
-                
-                return date.toLocaleDateString('ko-KR');
-            } catch (e) {
-                return '시간 정보 없음';
+            body {
+                padding-bottom: 80px;
             }
         }
-        
-        function fallbackToLocalStorage() {
-            console.log('로컬 스토리지에서 데이터 로드');
+    </style>
+</head>
+<body>
+    <!-- 로딩 화면 -->
+    <div id="loadingScreen" class="loading-screen">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- 메인 컨텐츠 -->
+    <div class="container mx-auto max-w-4xl px-4 py-6">
+        <!-- 상단 헤더 -->
+        <div class="flex items-center justify-between mb-6">
+            <button onclick="goBack()" class="glass-card p-3 rounded-xl hover:bg-white/80 transition">
+                <i class="fas fa-arrow-left text-xl text-gray-700"></i>
+            </button>
             
-            const urlParams = new URLSearchParams(window.location.search);
-            const productId = urlParams.get('id');
-            const products = JSON.parse(localStorage.getItem('plantiaProducts') || '[]');
-            const product = products.find(p => p.id == productId);
+            <div class="flex gap-2">
+                <button onclick="window.location.href='index.html'" class="glass-card p-3 rounded-xl hover:bg-white/80 transition">
+                    <i class="fas fa-home text-xl text-gray-700"></i>
+                </button>
+                <button onclick="openReportModal()" class="glass-card p-3 rounded-xl hover:bg-white/80 transition">
+                    <i class="fas fa-flag text-xl text-gray-700"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 상품 상세 카드 -->
+        <div class="glass-card rounded-2xl overflow-hidden mb-4">
+            <!-- 이미지 슬라이더 -->
+            <div class="image-slider-container">
+                <div id="imageSlider"></div>
+                <button id="prevBtn" class="slider-btn prev" onclick="prevSlide()" style="display: none;">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <button id="nextBtn" class="slider-btn next" onclick="nextSlide()" style="display: none;">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+                <div id="indicators" class="indicators"></div>
+            </div>
+
+            <!-- 상품 정보 -->
+            <div class="p-6">
+                <!-- 제목 및 상태 -->
+                <div class="flex items-start justify-between mb-4">
+                    <div class="flex-1">
+                        <h1 id="productTitle" class="text-2xl font-bold text-gray-900 mb-2">로딩중...</h1>
+                        <div class="flex items-center gap-2 text-sm text-gray-600">
+                            <span id="productCategory">카테고리</span>
+                            <span>•</span>
+                            <span id="productDate">날짜</span>
+                        </div>
+                    </div>
+                    <span id="statusBadge" class="px-3 py-1 rounded-full text-sm font-bold bg-blue-100 text-blue-800">판매중</span>
+                </div>
+
+                <!-- 가격 -->
+                <div class="bg-green-50 rounded-xl p-4 mb-4">
+                    <p id="productPrice" class="text-2xl font-bold text-gray-900">0원</p>
+                    <p id="priceInfo" class="text-sm text-gray-600 mt-1">가격 협의 가능</p>
+                </div>
+
+                <!-- 상품 설명 -->
+                <div class="mb-6">
+                    <h3 class="font-bold text-gray-800 mb-2">상품 설명</h3>
+                    <p id="productDescription" class="text-gray-700 whitespace-pre-wrap leading-relaxed">설명 로딩중...</p>
+                </div>
+
+                <!-- 상품 통계 -->
+                <div class="flex items-center gap-6 text-sm text-gray-600 mb-6">
+                    <div class="flex items-center gap-1">
+                        <i class="fas fa-eye"></i>
+                        <span id="viewCount">0</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <i class="fas fa-heart"></i>
+                        <span id="likeCount">0</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <i class="fas fa-comment"></i>
+                        <span id="chatCount">0</span>
+                    </div>
+                </div>
+
+                <!-- 판매자 정보 -->
+                <div class="border-t pt-4">
+                    <h3 class="font-bold text-gray-800 mb-3">판매자 정보</h3>
+                    <div class="flex items-center gap-3">
+                        <img id="sellerAvatar" src="https://via.placeholder.com/50?text=?" alt="판매자" 
+                             class="w-12 h-12 rounded-full object-cover border-2 border-gray-200">
+                        <div>
+                            <p id="sellerName" class="font-bold text-gray-900">로딩중...</p>
+                            <p class="text-sm text-gray-600">
+                                <i class="fas fa-map-marker-alt mr-1"></i>
+                                <span id="productLocation">위치</span>
+                            </p>
+                            <p class="text-xs text-gray-500">
+                                가입일: <span id="sellerJoinDate">-</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 거래 희망 장소 (지도) -->
+        <div id="mapContainer" class="hidden glass-card rounded-2xl p-6 mb-4">
+            <h3 class="font-bold text-lg text-gray-800 mb-3">
+                <i class="fas fa-map-marker-alt text-green-600 mr-2"></i>거래 희망 장소
+            </h3>
+            <div id="tradeMap"></div>
+        </div>
+
+        <!-- 판매자의 다른 상품 -->
+        <div class="glass-card rounded-2xl p-6 mb-4">
+            <h3 class="font-bold text-lg text-gray-800 mb-4">
+                <i class="fas fa-store text-purple-600 mr-2"></i>판매자의 다른 상품
+            </h3>
+            <div id="sellerOtherProducts" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <p class="col-span-full text-center text-gray-500">로딩 중...</p>
+            </div>
+        </div>
+
+        <!-- 함께 본 상품 (추천) -->
+        <div class="glass-card rounded-2xl p-6 mb-4">
+            <h3 class="font-bold text-lg text-gray-800 mb-4">
+                <i class="fas fa-lightbulb text-yellow-500 mr-2"></i>이런 상품은 어때요?
+            </h3>
+            <div id="similarProducts" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <p class="col-span-full text-center text-gray-500">로딩 중...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 하단 고정 바 -->
+    <div class="floating-bottom">
+        <div class="container mx-auto max-w-4xl">
+            <!-- 구매자 액션 -->
+            <div id="buyerActions" class="flex items-center gap-3">
+                <button id="likeBtn" onclick="toggleLike()" class="p-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition">
+                    <i id="likeIcon" class="far fa-heart text-gray-600 text-xl"></i>
+                </button>
+                <button id="actionBtn" onclick="handleChatClick()" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-bold transition">
+                    채팅하기
+                </button>
+            </div>
             
-            if (product) {
-                updateProductUI(product);
-                document.getElementById('loading').classList.add('hidden');
-                document.getElementById('content').classList.remove('hidden');
-                
-                // 상태 표시
-                document.getElementById('debugProductId').textContent += ' (오프라인 모드)';
-                showOfflineNotice();
-            } else {
-                showProductNotFound();
-            }
-        }
-        
-        function saveToLocalStorage(product) {
-            try {
-                const products = JSON.parse(localStorage.getItem('plantiaProducts') || '[]');
-                const index = products.findIndex(p => p.id === product.id);
-                
-                if (index !== -1) {
-                    products[index] = product;
-                } else {
-                    products.push(product);
-                }
-                
-                localStorage.setItem('plantiaProducts', JSON.stringify(products));
-            } catch (error) {
-                console.error('로컬 스토리지 저장 오류:', error);
-            }
-        }
-        
-        function showProductNotFound() {
-            document.getElementById('loading').innerHTML = `
-                <div class="text-center py-12">
-                    <i class="fas fa-seedling text-6xl text-gray-300 mb-4"></i>
-                    <h2 class="text-xl font-bold text-gray-700 mb-2">상품을 찾을 수 없습니다</h2>
-                    <p class="text-gray-500 mb-6">삭제되었거나 존재하지 않는 상품입니다.</p>
-                    <button onclick="location.href='index.html'" 
-                            class="bg-green-600 text-white px-6 py-2 rounded-full font-medium">
-                        홈으로 가기
+            <!-- 판매자 액션 (본인 상품일 때만 표시) -->
+            <div id="ownerActions" class="hidden space-y-3">
+                <div class="flex items-center gap-3">
+                    <button onclick="openStatusModal()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-xl font-medium transition">
+                        <i class="fas fa-sync-alt mr-2"></i>상태 변경
+                    </button>
+                    <button onclick="editProduct()" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded-xl font-medium transition">
+                        <i class="fas fa-edit mr-2"></i>수정
+                    </button>
+                    <button onclick="deleteProduct()" class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-xl font-medium transition">
+                        <i class="fas fa-trash mr-2"></i>삭제
                     </button>
                 </div>
-            `;
-        }
-        
-        function showOfflineNotice() {
-            const notice = document.createElement('div');
-            notice.className = 'bg-yellow-50 border-l-4 border-yellow-400 p-4 mx-4 my-4 rounded';
-            notice.innerHTML = `
-                <div class="flex items-center">
-                    <i class="fas fa-wifi-slash text-yellow-400 mr-2"></i>
-                    <p class="text-yellow-700 text-sm">
-                        오프라인 모드로 표시됩니다. 인터넷 연결 후 새로고침해주세요.
+            </div>
+        </div>
+    </div>
+
+    <!-- 상태 변경 모달 -->
+    <div id="statusModal" class="modal hidden" onclick="if(event.target === this) closeStatusModal()">
+        <div class="modal-content p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-bold text-gray-800">거래 상태 변경</h3>
+                <button onclick="closeStatusModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-3">
+                <button onclick="changeStatus('판매중')" class="w-full p-4 bg-blue-50 hover:bg-blue-100 rounded-xl text-left transition">
+                    <span class="font-bold text-blue-600">판매중</span>
+                    <p class="text-sm text-gray-600 mt-1">판매 가능한 상태로 변경</p>
+                </button>
+                <button onclick="changeStatus('예약중')" class="w-full p-4 bg-orange-50 hover:bg-orange-100 rounded-xl text-left transition">
+                    <span class="font-bold text-orange-600">예약중</span>
+                    <p class="text-sm text-gray-600 mt-1">구매자와 거래 예약됨</p>
+                </button>
+                <button onclick="changeStatus('판매완료')" class="w-full p-4 bg-red-50 hover:bg-red-100 rounded-xl text-left transition">
+                    <span class="font-bold text-red-600">판매완료</span>
+                    <p class="text-sm text-gray-600 mt-1">거래가 완료됨</p>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 신고 모달 -->
+    <div id="reportModal" class="modal hidden" onclick="if(event.target === this) closeReportModal()">
+        <div class="modal-content p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-bold text-gray-800">
+                    <i class="fas fa-flag text-red-600 mr-2"></i>신고하기
+                </h3>
+                <button onclick="closeReportModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-600 mb-2">신고 사유</label>
+                    <select id="reportReason" class="w-full p-3 border border-gray-200 rounded-xl">
+                        <option value="">선택해주세요</option>
+                        <option value="사기 의심">사기 의심</option>
+                        <option value="전문 판매업자">전문 판매업자</option>
+                        <option value="부적절한 게시글">부적절한 게시글</option>
+                        <option value="거래 금지 품목">거래 금지 품목</option>
+                        <option value="기타">기타</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-600 mb-2">상세 내용</label>
+                    <textarea id="reportDetails" rows="4" placeholder="신고 사유를 상세히 입력해주세요" 
+                              class="w-full p-3 border border-gray-200 rounded-xl resize-none"></textarea>
+                </div>
+                
+                <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+                    <p class="text-sm text-yellow-800">
+                        <i class="fas fa-info-circle mr-2"></i>
+                        허위 신고 시 서비스 이용이 제한될 수 있습니다
                     </p>
                 </div>
-            `;
-            
-            document.querySelector('main').insertBefore(notice, document.querySelector('main').firstChild);
-        }
-        
-        // ========== 페이지 언로드 시 정리 ==========
-        window.addEventListener('beforeunload', () => {
-            if (unsubscribeProduct) {
-                unsubscribeProduct();
-            }
-            
-            if (slideInterval) {
-                clearInterval(slideInterval);
-            }
-        });
-    </script>
+                
+                <div class="flex gap-3">
+                    <button onclick="closeReportModal()" class="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl hover:bg-gray-200 transition">
+                        취소
+                    </button>
+                    <button onclick="submitReport()" class="flex-1 bg-red-600 text-white py-3 rounded-xl hover:bg-red-700 transition">
+                        신고하기
+                    </button>
+                </div>
+                
+                <button onclick="blockUser()" class="w-full mt-2 text-sm text-gray-600 hover:text-gray-800 underline">
+                    이 사용자의 게시글 보지 않기
+                </button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
