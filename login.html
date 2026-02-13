@@ -3,61 +3,558 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>로그인 및 회원가입 - PlantiaWorld</title>
+    <title>로그인 - PlantiaWorld</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { 
+            getAuth, 
+            createUserWithEmailAndPassword, 
+            signInWithEmailAndPassword, 
+            signOut,
+            onAuthStateChanged,
+            deleteUser,
+            EmailAuthProvider,
+            reauthenticateWithCredential,
+            setPersistence,
+            browserSessionPersistence,
+            browserLocalPersistence
+        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            setDoc,
+            getDoc,
+            deleteDoc,
+            collection,
+            addDoc,
+            serverTimestamp
+        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+           apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
+           authDomain: "plantiaworld.firebaseapp.com",
+           projectId: "plantiaworld",
+           storageBucket: "plantiaworld.firebasestorage.app",
+           messagingSenderId: "18112813073",
+           appId: "1:18112813073:web:7247046c038a3831db79b0",
+           measurementId: "G-8XSSM279KY"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let map = null;
+        let marker = null;
+        let selectedLocation = null;
+        let currentMode = 'login'; // 'login' or 'signup'
+
+        window.firebaseModules = {
+            db,
+            auth,
+            firestore: { doc, setDoc, getDoc, deleteDoc, collection, addDoc, serverTimestamp },
+            authFunctions: { 
+                createUserWithEmailAndPassword, 
+                signInWithEmailAndPassword, 
+                signOut, 
+                onAuthStateChanged,
+                deleteUser,
+                EmailAuthProvider,
+                reauthenticateWithCredential
+            }
+        };
+
+        // ========== 페이지 로드 시 인증 상태 확인 ==========
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                // 이미 로그인된 상태
+                const userDoc = await getDoc(doc(db, 'users', user.uid));
+                const userData = userDoc.data();
+                const displayName = userData?.username || user.email;
+                
+                // 로그인 상태 화면으로 전환
+                showLoggedInView(displayName, user);
+            } else {
+                // 로그아웃 상태
+                showLoginForm();
+            }
+        });
+
+        // ========== 로그인 폼 표시 ==========
+        function showLoginForm() {
+            document.getElementById('loginView').classList.remove('hidden');
+            document.getElementById('loggedInView').classList.add('hidden');
+            currentMode = 'login';
+            updateFormMode();
+        }
+
+        // ========== 로그인된 화면 표시 ==========
+        function showLoggedInView(displayName, user) {
+            document.getElementById('loginView').classList.add('hidden');
+            document.getElementById('loggedInView').classList.remove('hidden');
+            document.getElementById('userDisplayName').textContent = displayName;
+            document.getElementById('userEmail').textContent = user.email;
+        }
+
+        // ========== 모드 전환 (로그인 ↔ 회원가입) ==========
+        window.toggleMode = function() {
+            currentMode = currentMode === 'login' ? 'signup' : 'login';
+            updateFormMode();
+        };
+
+        function updateFormMode() {
+            const signupFields = document.getElementById('signupFields');
+            const submitBtn = document.getElementById('submitBtn');
+            const toggleText = document.getElementById('toggleModeText');
+            const toggleBtn = document.getElementById('toggleModeBtn');
+            const pageTitle = document.getElementById('pageTitle');
+            const pageSubTitle = document.getElementById('pageSubTitle');
+
+            if (currentMode === 'signup') {
+                signupFields.classList.remove('hidden');
+                submitBtn.textContent = '회원가입';
+                toggleText.textContent = '이미 계정이 있으신가요?';
+                toggleBtn.textContent = '로그인';
+                pageTitle.textContent = '회원가입';
+                pageSubTitle.textContent = 'PlantiaWorld에 가입하세요';
+                document.getElementById('rememberMeSection').classList.add('hidden');
+                
+                // 지도 초기화
+                setTimeout(() => {
+                    if (!map) initMap();
+                }, 100);
+            } else {
+                signupFields.classList.add('hidden');
+                submitBtn.textContent = '로그인';
+                toggleText.textContent = '계정이 없으신가요?';
+                toggleBtn.textContent = '회원가입';
+                pageTitle.textContent = '로그인';
+                pageSubTitle.textContent = '이웃과 식물을 나누는 즐거움';
+                document.getElementById('rememberMeSection').classList.remove('hidden');
+            }
+            
+            hideError();
+        }
+
+        // ========== 지도 초기화 ==========
+        function initMap() {
+            if (map) return;
+            
+            map = L.map('map').setView([37.5665, 126.9780], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            map.on('click', function(e) {
+                const { lat, lng } = e.latlng;
+                selectedLocation = { latitude: lat, longitude: lng };
+                
+                if (marker) map.removeLayer(marker);
+                marker = L.marker([lat, lng]).addTo(map);
+                
+                document.getElementById('locationStatus').innerHTML = 
+                    `<i class="fas fa-check-circle text-green-600 mr-2"></i>위치 선택 완료`;
+            });
+        }
+
+        // ========== 폼 제출 처리 ==========
+        document.getElementById('authForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const submitBtn = document.getElementById('submitBtn');
+            
+            if (!email || !password) {
+                showError('이메일과 비밀번호를 입력해주세요.');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.classList.add('button-loading');
+            hideError();
+
+            try {
+                if (currentMode === 'signup') {
+                    // 회원가입
+                    const realName = document.getElementById('realName').value.trim();
+                    const username = document.getElementById('username').value.trim();
+                    
+                    if (!realName || !username) {
+                        showError('성함과 닉네임을 입력해주세요.');
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove('button-loading');
+                        return;
+                    }
+                    
+                    if (!selectedLocation) {
+                        showError('지도에서 활동 지역을 선택해주세요.');
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove('button-loading');
+                        return;
+                    }
+
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    const user = userCredential.user;
+
+                    await setDoc(doc(db, 'users', user.uid), {
+                        email: user.email,
+                        realName: realName,
+                        username: username,
+                        displayName: username,
+                        location: selectedLocation ? `${selectedLocation.latitude}, ${selectedLocation.longitude}` : '',
+                        locationData: selectedLocation,
+                        createdAt: serverTimestamp(),
+                        photoURL: null,
+                        profileImage: null,
+                        subscription: 'Free',
+                        settings: {
+                            notifications: true,
+                            emailAlerts: false,
+                            darkMode: false,
+                            language: 'ko'
+                        }
+                    });
+
+                    showToast('회원가입이 완료되었습니다!', 'success');
+                    
+                    // 로그인된 화면으로 자동 전환
+                    setTimeout(() => {
+                        showLoggedInView(username, user);
+                    }, 1000);
+
+                } else {
+                    // 로그인 - 자동 로그인 유지 여부에 따라 세션 설정
+                    const rememberMe = document.getElementById('rememberMe')?.checked || false;
+                    await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
+                    
+                    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+                    const user = userCredential.user;
+                    
+                    const userDoc = await getDoc(doc(db, 'users', user.uid));
+                    const userData = userDoc.data();
+                    const displayName = userData?.username || user.email;
+
+                    showToast('로그인 되었습니다!', 'success');
+                    
+                    // 로그인된 화면으로 자동 전환
+                    setTimeout(() => {
+                        showLoggedInView(displayName, user);
+                    }, 1000);
+                }
+
+            } catch (error) {
+                console.error('인증 오류:', error);
+                handleAuthError(error);
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('button-loading');
+            }
+        });
+
+        // ========== 로그아웃 ==========
+        window.handleLogout = async function() {
+            if (!confirm('로그아웃 하시겠습니까?')) return;
+            
+            try {
+                await signOut(auth);
+                showToast('로그아웃 되었습니다.', 'success');
+                showLoginForm();
+                
+                // 폼 초기화
+                document.getElementById('authForm').reset();
+                selectedLocation = null;
+                if (marker) {
+                    map.removeLayer(marker);
+                    marker = null;
+                }
+            } catch (error) {
+                console.error('로그아웃 오류:', error);
+                showToast('로그아웃 중 오류가 발생했습니다.', 'error');
+            }
+        };
+
+        // ========== 회원 탈퇴 ==========
+        window.handleDeleteAccount = async function() {
+            const confirmation = prompt('정말로 탈퇴하시겠습니까? 탈퇴하려면 "탈퇴"라고 입력해주세요.');
+            
+            if (confirmation !== '탈퇴') {
+                showToast('탈퇴가 취소되었습니다.', 'info');
+                return;
+            }
+
+            const password = prompt('본인 확인을 위해 비밀번호를 입력해주세요:');
+            if (!password) {
+                showToast('비밀번호를 입력하지 않아 취소되었습니다.', 'info');
+                return;
+            }
+
+            try {
+                const user = auth.currentUser;
+                if (!user) {
+                    showToast('로그인 상태가 아닙니다.', 'error');
+                    return;
+                }
+
+                // 재인증
+                const credential = EmailAuthProvider.credential(user.email, password);
+                await reauthenticateWithCredential(user, credential);
+
+                // Firestore 사용자 데이터 삭제
+                await deleteDoc(doc(db, 'users', user.uid));
+
+                // Auth 계정 삭제
+                await deleteUser(user);
+
+                showToast('회원 탈퇴가 완료되었습니다.', 'success');
+                
+                setTimeout(() => {
+                    showLoginForm();
+                    document.getElementById('authForm').reset();
+                }, 2000);
+
+            } catch (error) {
+                console.error('탈퇴 오류:', error);
+                if (error.code === 'auth/wrong-password') {
+                    showToast('비밀번호가 틀렸습니다.', 'error');
+                } else {
+                    showToast('탈퇴 처리 중 오류가 발생했습니다.', 'error');
+                }
+            }
+        };
+
+        // ========== 메인으로 돌아가기 ==========
+        window.goToMain = function() {
+            window.location.href = 'index.html';
+        };
+
+        // ========== 비밀번호 표시/숨기기 ==========
+        window.togglePasswordVisibility = function() {
+            const passwordInput = document.getElementById('password');
+            const eyeIcon = document.getElementById('eyeIcon');
+            
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                eyeIcon.classList.remove('fa-eye');
+                eyeIcon.classList.add('fa-eye-slash');
+            } else {
+                passwordInput.type = 'password';
+                eyeIcon.classList.remove('fa-eye-slash');
+                eyeIcon.classList.add('fa-eye');
+            }
+        };
+
+        // ========== 오류 처리 ==========
+        function handleAuthError(error) {
+            let errorMessage = '인증 중 오류가 발생했습니다.';
+            
+            switch (error.code) {
+                case 'auth/email-already-in-use':
+                    errorMessage = '이미 사용 중인 이메일입니다.';
+                    break;
+                case 'auth/invalid-email':
+                    errorMessage = '유효하지 않은 이메일 형식입니다.';
+                    break;
+                case 'auth/weak-password':
+                    errorMessage = '비밀번호는 6자 이상이어야 합니다.';
+                    break;
+                case 'auth/user-not-found':
+                    errorMessage = '존재하지 않는 계정입니다.';
+                    break;
+                case 'auth/wrong-password':
+                    errorMessage = '비밀번호가 틀렸습니다.';
+                    break;
+                case 'auth/invalid-credential':
+                    errorMessage = '이메일 또는 비밀번호가 올바르지 않습니다.';
+                    break;
+                case 'auth/too-many-requests':
+                    errorMessage = '너무 많은 시도가 있었습니다. 잠시 후 다시 시도해주세요.';
+                    break;
+            }
+            
+            showError(errorMessage);
+        }
+
+        function showError(message) {
+            const errorElement = document.getElementById('errorMessage');
+            const errorText = document.getElementById('errorText');
+            
+            errorText.textContent = message;
+            errorElement.classList.remove('hidden');
+            
+            setTimeout(() => {
+                errorElement.classList.add('hidden');
+            }, 5000);
+        }
+
+        function hideError() {
+            document.getElementById('errorMessage').classList.add('hidden');
+        }
+
+        function showToast(message, type = 'info') {
+            const existingToast = document.querySelector('.toast-message');
+            if (existingToast) existingToast.remove();
+            
+            const toast = document.createElement('div');
+            toast.className = 'toast-message';
+            
+            const colors = {
+                success: '#10b981',
+                error: '#dc2626',
+                warning: '#f59e0b',
+                info: '#3b82f6'
+            };
+            
+            toast.style.backgroundColor = colors[type] || colors.info;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        console.log('Firebase 초기화 완료');
+    </script>
+    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
-        body { font-family: 'Noto Sans KR', sans-serif; }
+        
+        body { 
+            font-family: 'Noto Sans KR', sans-serif; 
+            background: linear-gradient(135deg, #f8fdf8 0%, #e8f5e9 100%);
+            min-height: 100vh;
+        }
+        
         .plant-bg {
             background-image: url('https://images.unsplash.com/photo-1545241047-6083a3684587?ixlib=rb-4.0.3&auto=format&fit=crop&w=1000&q=80');
-            background-size: cover; background-position: center;
+            background-size: cover; 
+            background-position: center;
         }
+        
         .glass-card {
             background: rgba(255, 255, 255, 0.96);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.3);
         }
-        #map { height: 180px; border-radius: 12px; margin-top: 8px; border: 1px solid #ddd; z-index: 10; }
-        .hidden { display: none !important; }
+        
+        #map { 
+            height: 180px; 
+            border-radius: 12px; 
+            margin-top: 8px; 
+            border: 1px solid #ddd; 
+            z-index: 10; 
+        }
+        
+        .hidden { 
+            display: none !important; 
+        }
+        
+        .button-loading {
+            position: relative;
+            color: transparent !important;
+        }
+        
+        .button-loading::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            top: 50%;
+            left: 50%;
+            margin-left: -10px;
+            margin-top: -10px;
+            border: 2px solid #ffffff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: button-spin 0.8s linear infinite;
+        }
+        
+        @keyframes button-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .toast-message {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            z-index: 1000;
+            font-weight: 500;
+            font-size: 14px;
+            color: white;
+            animation: fade-in 0.3s ease-out;
+        }
+        
+        @keyframes fade-in {
+            from { opacity: 0; transform: translate(-50%, -20px); }
+            to { opacity: 1; transform: translate(-50%, 0); }
+        }
     </style>
 </head>
 <body class="plant-bg min-h-screen flex items-center justify-center p-4 py-12">
 
-    <div class="glass-card p-8 rounded-3xl shadow-2xl max-w-lg w-full">
+    <!-- 로그인/회원가입 폼 -->
+    <div id="loginView" class="glass-card p-8 rounded-3xl shadow-2xl max-w-lg w-full">
+        <!-- 돌아가기 버튼 -->
+        <button onclick="goToMain()" class="mb-4 text-gray-600 hover:text-green-600 flex items-center gap-2 transition-colors">
+            <i class="fas fa-arrow-left"></i>
+            <span class="text-sm font-medium">메인으로</span>
+        </button>
+
         <div class="text-center mb-6">
             <div class="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
                 <i class="fas fa-leaf text-white text-2xl"></i>
             </div>
-            <h1 id="pageTitle" class="text-2xl font-bold text-gray-800">PlantiaWorld 시작하기</h1>
+            <h1 id="pageTitle" class="text-2xl font-bold text-gray-800">로그인</h1>
             <p id="pageSubTitle" class="text-sm text-gray-500 mt-1">이웃과 식물을 나누는 즐거움</p>
+        </div>
+
+        <!-- 에러 메시지 -->
+        <div id="errorMessage" class="hidden mb-4 p-3 bg-red-50 rounded-xl border border-red-200">
+            <div class="flex items-center gap-2">
+                <i class="fas fa-exclamation-circle text-red-600"></i>
+                <p id="errorText" class="text-sm text-red-800 font-medium"></p>
+            </div>
         </div>
 
         <form id="authForm" class="space-y-4">
             <div>
                 <label class="block text-xs font-bold text-gray-600 mb-1">이메일 주소</label>
-                <input type="email" id="email" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="example@email.com" required>
+                <input type="email" id="email" 
+                    class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent" 
+                    placeholder="example@email.com" required>
             </div>
 
-            <div id="signupFields" class="space-y-4">
+            <!-- 회원가입 전용 필드 -->
+            <div id="signupFields" class="space-y-4 hidden">
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs font-bold text-gray-600 mb-1">성함</label>
-                        <input type="text" id="realName" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="본명">
+                        <input type="text" id="realName" 
+                            class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent" 
+                            placeholder="본명">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-gray-600 mb-1">닉네임</label>
-                        <input type="text" id="username" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="닉네임">
+                        <input type="text" id="username" 
+                            class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent" 
+                            placeholder="닉네임">
                     </div>
                 </div>
                 <div>
                     <label class="block text-xs font-bold text-gray-600 mb-1">활동 지역 (지도 클릭)</label>
                     <div id="map"></div>
-                    <div class="mt-3 p-3 bg-green-50 rounded-xl flex items-center gap-2">
-                        <i class="fas fa-map-marker-alt text-green-600"></i>
-                        <p id="locationStatus" class="text-sm text-green-800 font-medium">지도를 클릭해 주세요</p>
+                    <div class="mt-3 p-3 bg-green-50 rounded-xl">
+                        <p id="locationStatus" class="text-sm text-green-800 font-medium">
+                            <i class="fas fa-map-marker-alt text-green-600 mr-2"></i>지도를 클릭해 주세요
+                        </p>
                     </div>
                 </div>
             </div>
@@ -65,134 +562,86 @@
             <div>
                 <label class="block text-xs font-bold text-gray-600 mb-1">비밀번호</label>
                 <div class="relative">
-                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400"><i class="fas fa-lock"></i></span>
-                    <input type="password" id="password" class="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500" placeholder="6자 이상 입력" required>
+                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                        <i class="fas fa-lock"></i>
+                    </span>
+                    <input type="password" id="password" 
+                        class="w-full p-3 pl-10 pr-10 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent" 
+                        placeholder="비밀번호 (6자 이상)" required>
+                    <button type="button" onclick="togglePasswordVisibility()" 
+                        class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
+                        <i id="eyeIcon" class="fas fa-eye"></i>
+                    </button>
                 </div>
             </div>
 
-            <button type="submit" id="submitBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl shadow-lg transition transform active:scale-95 mt-4">
-                가입 완료 및 시작하기
+            <button type="submit" id="submitBtn" 
+                class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl transition-colors shadow-lg">
+                로그인
             </button>
+            
+            <!-- 로그인 유지 체크박스 (로그인 모드에서만 표시) -->
+            <div id="rememberMeSection" class="flex items-center gap-2">
+                <input type="checkbox" id="rememberMe" class="h-4 w-4 rounded border-gray-300 text-green-600 cursor-pointer">
+                <label for="rememberMe" class="text-sm text-gray-600 cursor-pointer">로그인 유지 (브라우저 닫아도 유지)</label>
+            </div>
         </form>
 
+        <!-- 모드 전환 버튼 -->
         <div class="mt-6 text-center">
-            <p id="toggleText" class="text-xs text-gray-400 font-medium">
-                이미 계정이 있으신가요? <button onclick="toggleMode()" class="text-green-600 underline focus:outline-none">로그인</button>
+            <p class="text-sm text-gray-600">
+                <span id="toggleModeText">계정이 없으신가요?</span>
+                <button type="button" onclick="toggleMode()" id="toggleModeBtn" 
+                    class="text-green-600 hover:text-green-700 font-bold ml-1">
+                    회원가입
+                </button>
             </p>
         </div>
     </div>
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+    <!-- 로그인 완료 화면 -->
+    <div id="loggedInView" class="hidden glass-card p-8 rounded-3xl shadow-2xl max-w-lg w-full">
+        <!-- 돌아가기 버튼 -->
+        <button onclick="goToMain()" class="mb-4 text-gray-600 hover:text-green-600 flex items-center gap-2 transition-colors">
+            <i class="fas fa-arrow-left"></i>
+            <span class="text-sm font-medium">메인으로</span>
+        </button>
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
-            authDomain: "plantiaworld.firebaseapp.com",
-            projectId: "plantiaworld",
-            storageBucket: "plantiaworld.appspot.com",
-            messagingSenderId: "18112813073",
-            appId: "1:18112813073:web:7247046c038a3831db79b0"
-        };
+        <div class="text-center mb-6">
+            <div class="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <i class="fas fa-user-check text-white text-2xl"></i>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-800">로그인 완료</h1>
+            <p class="text-sm text-gray-500 mt-1">PlantiaWorld에 오신 것을 환영합니다</p>
+        </div>
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        <!-- 사용자 정보 -->
+        <div class="bg-green-50 rounded-2xl p-6 mb-6 border border-green-100">
+            <div class="flex items-center gap-4 mb-4">
+                <div class="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center">
+                    <i class="fas fa-user text-white text-2xl"></i>
+                </div>
+                <div>
+                    <p class="text-lg font-bold text-gray-800" id="userDisplayName">사용자</p>
+                    <p class="text-sm text-gray-600" id="userEmail"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="fd888e988fbd98909c9491d39e9290">[email&#160;protected]</a></p>
+                </div>
+            </div>
+        </div>
 
-        let isLoginMode = false; // 현재 모드 (회원가입이 기본)
+        <!-- 액션 버튼들 -->
+        <div class="space-y-3">
+            <button onclick="goToMain()" 
+                class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl transition-colors shadow-lg flex items-center justify-center gap-2">
+                <i class="fas fa-home"></i>
+                <span>메인 페이지로 이동</span>
+            </button>
 
-        // --- 모드 전환 함수 ---
-        window.toggleMode = function() {
-            isLoginMode = !isLoginMode;
-            const signupFields = document.getElementById('signupFields');
-            const submitBtn = document.getElementById('submitBtn');
-            const pageTitle = document.getElementById('pageTitle');
-            const toggleText = document.getElementById('toggleText');
+            <button onclick="handleLogout()" 
+                class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2">
+                <i class="fas fa-sign-out-alt"></i>
+                <span>로그아웃</span>
+            </button>
 
-            if (isLoginMode) {
-                signupFields.classList.add('hidden');
-                pageTitle.innerText = "다시 오셨군요!";
-                submitBtn.innerText = "로그인";
-                toggleText.innerHTML = `처음이신가요? <button onclick="toggleMode()" class="text-green-600 underline focus:outline-none">회원가입</button>`;
-            } else {
-                signupFields.classList.remove('hidden');
-                pageTitle.innerText = "PlantiaWorld 시작하기";
-                submitBtn.innerText = "가입 완료 및 시작하기";
-                toggleText.innerHTML = `이미 계정이 있으신가요? <button onclick="toggleMode()" class="text-green-600 underline focus:outline-none">로그인</button>`;
-                map.invalidateSize(); // 지도 깨짐 방지
-            }
-        };
-
-        // --- 지도 로직 ---
-        let userLocation = { lat: 37.5665, lng: 126.9780, name: "서울특별시" };
-        const map = L.map('map').setView([userLocation.lat, userLocation.lng], 12);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-        let marker;
-
-        map.on('click', function(e) {
-            const { lat, lng } = e.latlng;
-            if (marker) map.removeLayer(marker);
-            marker = L.marker([lat, lng]).addTo(map);
-            fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=ko`)
-                .then(res => res.json())
-                .then(data => {
-                    userLocation.name = data.display_name.split(',')[0] || "알 수 없는 위치";
-                    userLocation.lat = lat; userLocation.lng = lng;
-                    document.getElementById('locationStatus').innerText = `현재 위치: ${userLocation.name}`;
-                });
-        });
-
-        // --- 인증 처리 (로그인/회원가입 통합) ---
-        document.getElementById('authForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const btn = document.getElementById('submitBtn');
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-
-            btn.disabled = true;
-            btn.innerText = "처리 중...";
-
-            try {
-                if (isLoginMode) {
-                    // [로그인 로직]
-                    await signInWithEmailAndPassword(auth, email, password);
-                    alert("성공적으로 로그인되었습니다! 🌱");
-                    location.href = 'index.html';
-                } else {
-                    // [회원가입 로직]
-                    const nickname = document.getElementById('username').value;
-                    const realName = document.getElementById('realName').value;
-                    if (!marker) return alert('지도를 클릭해 활동 지역을 선택해주세요! 📍');
-
-                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                    await setDoc(doc(db, "users", userCredential.user.uid), {
-                        uid: userCredential.user.uid,
-                        email, nickname, realName,
-                        location: userLocation.name,
-                        lat: userLocation.lat, lng: userLocation.lng,
-                        joinDate: new Date().toISOString()
-                    });
-                    alert(`반갑습니다, ${nickname}님! 회원가입이 완료되었습니다.`);
-                    location.href = 'index.html';
-                }
-            } catch (error) {
-                let msg = "오류가 발생했습니다.";
-                if (error.code === "auth/email-already-in-use") msg = "이미 가입된 이메일입니다. 로그인 모드로 전환하여 로그인해주세요.";
-                else if (error.code === "auth/wrong-password") msg = "비밀번호가 틀렸습니다.";
-                else if (error.code === "auth/user-not-found") msg = "존재하지 않는 계정입니다.";
-                
-                alert(msg);
-                console.error(error);
-                btn.disabled = false;
-                btn.innerText = isLoginMode ? "로그인" : "가입 완료 및 시작하기";
-            }
-        });
-
-        // 이미 로그인 된 상태면 index로 이동
-        onAuthStateChanged(auth, (user) => {
-            if (user) location.href = 'index.html';
-        });
-    </script>
-</body>
-</html>
+            <button onclick="handleDeleteAccount()" 
+                class="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 border border-red-200">
+                <i class="fas fa-user-minus"></i>
