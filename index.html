@@ -4,200 +4,1168 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PlantiaWorld - 이웃과 식물을 나누는 공간</title>
+    <meta name="description" content="이웃과 함께하는 동네 식물 나눔 커뮤니티">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getFirestore, collection, onSnapshot, query, limit } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-        import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            query, 
+            where, 
+            orderBy, 
+            limit,
+            startAfter,
+            getDocs,
+            doc,
+            getDoc
+        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // ========== Firebase 설정 ==========
         const firebaseConfig = {
-            apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
-            authDomain: "plantiaworld.firebaseapp.com",
-            projectId: "plantiaworld",
-            storageBucket: "plantiaworld.appspot.com",
-            messagingSenderId: "18112813073",
-            appId: "1:18112813073:web:7247046c038a3831db79b0"
+           apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
+           authDomain: "plantiaworld.firebaseapp.com",
+           projectId: "plantiaworld",
+           storageBucket: "plantiaworld.firebasestorage.app",
+           messagingSenderId: "18112813073",
+           appId: "1:18112813073:web:7247046c038a3831db79b0",
+           measurementId: "G-8XSSM279KY"
         };
 
         const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
         const auth = getAuth(app);
+        const db = getFirestore(app);
 
-        window.auth = auth;
-        window.db = db;
-
-        let allProducts = [];
-        let currentFilter = 'all';
+        let currentUser = null;
+        let currentCategory = 'all';
         let currentSort = 'recent';
+        let lastVisible = null;
+        let isLoading = false;
+        let hasMore = true;
+        let myLocation = null;
+        let locationRange = 5;
+        let hideSoldItems = false; // 판매완료 숨김 옵션
 
-        // ========== 1. 로그인 상태 감지 및 UI 제어 (중요 수정!) ==========
-        onAuthStateChanged(auth, (user) => {
-            const authButtons = document.getElementById('authButtons');
-            const myPageBtn = document.getElementById('myPageBtn');
-            const writeBtn = document.getElementById('writeBtn');
-            const localSection = document.getElementById('localProductsSection');
+        const ITEMS_PER_PAGE = 20;
 
+        window.firebaseModules = { db, auth };
+
+        // ========== 유틸리티 함수 ==========
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showToast(message, type = 'success') {
+            const existingToast = document.querySelector('.toast');
+            if (existingToast) existingToast.remove();
+            
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'} mr-2"></i>${escapeHtml(message)}`;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function formatDate(timestamp) {
+            if (!timestamp) return '방금 전';
+            try {
+                const date = timestamp.seconds ? new Date(timestamp.seconds * 1000) : new Date(timestamp);
+                const now = new Date();
+                const diff = Math.floor((now - date) / 1000);
+                
+                if (diff < 60) return '방금 전';
+                if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+                if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+                if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+                return date.toLocaleDateString('ko-KR');
+            } catch (error) {
+                return '알 수 없음';
+            }
+        }
+
+        // ========== 디바운싱 함수 ==========
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // ========== 인증 상태 확인 ==========
+        onAuthStateChanged(auth, async (user) => {
+            currentUser = user;
+            updateAuthUI(user);
+            
             if (user) {
-                // [로그인 완료 상태]
-                const userName = user.displayName || user.email.split('@')[0];
-                authButtons.innerHTML = `
-                    <div class="flex items-center gap-3">
-                        <span class="text-xs font-bold text-green-700 hidden md:block">${userName} 집사님</span>
-                        <button onclick="handleLogout()" class="text-xs font-bold text-red-400 hover:text-red-600">로그아웃</button>
+                await loadUserLocation(user.uid);
+            } else {
+                myLocation = { latitude: 35.1631, longitude: 129.1635, address: '부산 해운대구' };
+                updateLocationUI();
+            }
+            
+            await loadProducts(true);
+            loadRecentSearches();
+            loadPopularKeywords();
+        });
+
+        // ========== 사용자 위치 로드 ==========
+        async function loadUserLocation(uid) {
+            try {
+                const userRef = doc(db, 'users', uid);
+                const userSnap = await getDoc(userRef);
+                
+                if (userSnap.exists()) {
+                    const userData = userSnap.data();
+                    myLocation = userData.location || { latitude: 35.1631, longitude: 129.1635, address: '부산 해운대구' };
+                    locationRange = userData.locationRange || 5;
+                }
+            } catch (error) {
+                console.error('위치 로드 오류:', error);
+            }
+            
+            updateLocationUI();
+        }
+
+        function updateLocationUI() {
+            if (myLocation && myLocation.address) {
+                document.getElementById('currentLocation').textContent = myLocation.address;
+                document.getElementById('locationRange').textContent = `${locationRange}km`;
+            }
+        }
+
+        // ========== 인증 UI 업데이트 ==========
+        function updateAuthUI(user) {
+            const authBtns = document.getElementById('authButtons');
+            const writeBtn = document.getElementById('writeBtn');
+            const myPageBtn = document.getElementById('myPageBtn');
+            
+            if (user) {
+                authBtns.innerHTML = '';
+                writeBtn.classList.remove('hidden');
+                myPageBtn.onclick = () => location.href = 'my-page.html';
+            } else {
+                authBtns.innerHTML = `
+                    <a href="login.html" class="text-green-600 hover:text-green-700 font-medium text-sm">
+                        <i class="fas fa-sign-in-alt mr-1"></i>로그인
+                    </a>
+                `;
+                writeBtn.classList.add('hidden');
+                myPageBtn.onclick = () => {
+                    if (confirm('로그인이 필요합니다. 로그인 페이지로 이동하시겠습니까?')) {
+                        location.href = 'login.html';
+                    }
+                };
+            }
+        }
+
+        // ========== 상품 로드 ==========
+        async function loadProducts(reset = false) {
+            if (isLoading || (!hasMore && !reset)) return;
+            
+            isLoading = true;
+            
+            if (reset) {
+                lastVisible = null;
+                hasMore = true;
+                document.getElementById('productGrid').innerHTML = '';
+                showSkeletonLoading();
+            } else {
+                document.getElementById('loadingMore').classList.remove('hidden');
+            }
+
+            try {
+                let q = collection(db, 'products');
+                let constraints = [];
+                
+                // 카테고리 필터
+                if (currentCategory !== 'all') {
+                    constraints.push(where('category', '==', currentCategory));
+                }
+                
+                // 판매완료 숨김
+                if (hideSoldItems) {
+                    constraints.push(where('status', '!=', '판매완료'));
+                }
+                
+                // 정렬 (likes는 배열이므로 서버 정렬 불가 - 클라이언트에서 처리)
+                if (currentSort === 'recent') {
+                    constraints.push(orderBy('createdAt', 'desc'));
+                } else if (currentSort === 'price') {
+                    constraints.push(orderBy('price', 'asc'));
+                } else if (currentSort === 'likes') {
+                    // likes 정렬은 클라이언트에서 처리하므로 기본 정렬 사용
+                    constraints.push(orderBy('createdAt', 'desc'));
+                }
+                
+                // 페이징
+                if (lastVisible) {
+                    constraints.push(startAfter(lastVisible));
+                }
+                
+                // likes 정렬일 때는 더 많은 데이터를 가져와서 클라이언트에서 정렬
+                const fetchLimit = currentSort === 'likes' ? ITEMS_PER_PAGE * 3 : ITEMS_PER_PAGE;
+                constraints.push(limit(fetchLimit));
+                
+                const finalQuery = query(q, ...constraints);
+                const snapshot = await getDocs(finalQuery);
+                
+                hideSkeletonLoading();
+                document.getElementById('loadingMore').classList.add('hidden');
+                
+                if (snapshot.empty && reset) {
+                    document.getElementById('productGrid').innerHTML = `
+                        <div class="col-span-full text-center py-20">
+                            <div class="inline-block p-8 bg-gradient-to-br from-green-50 to-emerald-50 rounded-3xl mb-6">
+                                <i class="fas fa-seedling text-6xl text-green-500 mb-4"></i>
+                            </div>
+                            <h3 class="text-2xl font-bold text-gray-800 mb-2">아직 등록된 상품이 없습니다</h3>
+                            <p class="text-gray-500 mb-6">첫 번째 식물 나눔의 주인공이 되어보세요!</p>
+                            ${currentUser ? `
+                                <button onclick="location.href='add-product.html'" class="bg-green-600 text-white px-8 py-4 rounded-xl hover:bg-green-700 transition shadow-lg">
+                                    <i class="fas fa-plus mr-2"></i>첫 상품 등록하기
+                                </button>
+                            ` : `
+                                <button onclick="location.href='login.html'" class="bg-green-600 text-white px-8 py-4 rounded-xl hover:bg-green-700 transition shadow-lg">
+                                    <i class="fas fa-sign-in-alt mr-2"></i>로그인하고 시작하기
+                                </button>
+                            `}
+                        </div>
+                    `;
+                    hasMore = false;
+                    isLoading = false;
+                    return;
+                }
+                
+                if (snapshot.docs.length < ITEMS_PER_PAGE) {
+                    hasMore = false;
+                }
+                
+                lastVisible = snapshot.docs[snapshot.docs.length - 1];
+                
+                // 문서를 배열로 변환
+                let products = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                
+                // likes 정렬일 때 클라이언트에서 정렬
+                if (currentSort === 'likes') {
+                    products.sort((a, b) => {
+                        const aLikes = Array.isArray(a.likes) ? a.likes.length : 0;
+                        const bLikes = Array.isArray(b.likes) ? b.likes.length : 0;
+                        return bLikes - aLikes;
+                    });
+                    // 필요한 개수만 잘라내기
+                    products = products.slice(0, ITEMS_PER_PAGE);
+                }
+                
+                const container = document.getElementById('productGrid');
+                container.classList.remove('hidden');
+                
+                products.forEach(product => {
+                    container.innerHTML += createProductCard(product, product.id);
+                });
+                
+                document.getElementById('productCount').textContent = `${container.children.length}개 상품`;
+                document.getElementById('networkError').classList.add('hidden');
+                
+            } catch (error) {
+                console.error('상품 로드 오류:', error);
+                console.error('에러 코드:', error.code);
+                console.error('에러 메시지:', error.message);
+                
+                hideSkeletonLoading();
+                document.getElementById('loadingMore').classList.add('hidden');
+                
+                if (reset) {
+                    showNetworkError();
+                    // 구체적인 에러 토스트 표시
+                    if (error.code === 'permission-denied') {
+                        showToast('데이터 접근 권한이 없습니다. Firebase 규칙을 확인해주세요.', 'error');
+                    } else if (error.code === 'unavailable') {
+                        showToast('네트워크 연결을 확인해주세요', 'error');
+                    } else {
+                        showToast('상품을 불러오는 중 오류가 발생했습니다', 'error');
+                    }
+                }
+            }
+            
+            isLoading = false;
+        }
+
+        // ========== 스켈레톤 로딩 ==========
+        function showSkeletonLoading() {
+            const container = document.getElementById('productGrid');
+            container.innerHTML = '';
+            
+            for (let i = 0; i < 10; i++) {
+                container.innerHTML += `
+                    <div class="skeleton-card bg-white rounded-2xl overflow-hidden animate-pulse">
+                        <div class="aspect-square bg-gray-200"></div>
+                        <div class="p-4 space-y-3">
+                            <div class="h-4 bg-gray-200 rounded w-3/4"></div>
+                            <div class="h-4 bg-gray-200 rounded w-1/2"></div>
+                            <div class="h-3 bg-gray-200 rounded w-full"></div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function hideSkeletonLoading() {
+            const skeletons = document.querySelectorAll('.skeleton-card');
+            skeletons.forEach(skeleton => skeleton.remove());
+        }
+
+        // ========== 상품 카드 생성 (이미지 에러 처리 추가) ==========
+        function createProductCard(product, id) {
+            const img = (product.images && product.images.length > 0) 
+                ? product.images[0]
+                : 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=400&q=60';
+            
+            const isSold = product.status === '판매완료';
+            const isReserved = product.status === '예약중';
+            const isFree = product.price === 0;
+            const displayPrice = isFree ? '나눔 🌱' : (product.price ? Number(product.price).toLocaleString() + '원' : '가격 미정');
+            const title = product.title || '제목 없음';
+            const location = product.sellerLocation || product.location || '위치 정보 없음';
+            const date = formatDate(product.createdAt);
+            
+            const viewCount = product.views || 0;
+            const chatCount = product.chatCount || 0;
+            const likeCount = Array.isArray(product.likes) ? product.likes.length : (product.likes || 0);
+            
+            // 상태 뱃지
+            let statusBadge = '';
+            if (isSold) {
+                statusBadge = '<div class="absolute top-2 left-2 bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-full z-10">판매완료</div>';
+            } else if (isReserved) {
+                statusBadge = '<div class="absolute top-2 left-2 bg-orange-500 text-white text-xs font-bold px-3 py-1 rounded-full z-10">예약중</div>';
+            }
+            
+            return `
+                <div class="product-card bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all ${isSold ? 'opacity-70' : ''}" 
+                     onclick="location.href='product-detail.html?id=${escapeHtml(id)}'">
+                    <div class="aspect-square overflow-hidden bg-gray-100 relative">
+                        ${statusBadge}
+                        <img src="${escapeHtml(img)}" 
+                             class="product-image hover:scale-110 transition-transform duration-300" 
+                             alt="${escapeHtml(title)}" 
+                             loading="lazy"
+                             onerror="this.src='https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=400&q=60'">
+                    </div>
+                    <div class="p-4">
+                        <h3 class="font-bold text-gray-900 text-sm mb-2 truncate">${escapeHtml(title)}</h3>
+                        <p class="text-lg font-bold mb-2 ${isFree ? 'text-green-600' : 'text-gray-900'}">${displayPrice}</p>
+                        <div class="flex items-center justify-between text-xs text-gray-500 mb-2">
+                            <span><i class="fas fa-map-marker-alt mr-1"></i>${escapeHtml(location)}</span>
+                            <span>${date}</span>
+                        </div>
+                        <div class="flex items-center gap-3 text-xs text-gray-400">
+                            <span><i class="far fa-eye mr-1"></i>${viewCount}</span>
+                            <span><i class="far fa-comment mr-1"></i>${chatCount}</span>
+                            <span><i class="far fa-heart mr-1"></i>${likeCount}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ========== 네트워크 오류 ==========
+        function showNetworkError() {
+            document.getElementById('networkError').classList.remove('hidden');
+        }
+
+        window.retryLoadProducts = async function() {
+            document.getElementById('networkError').classList.add('hidden');
+            await loadProducts(true);
+        };
+
+        // ========== 카테고리 필터 (시각적 피드백 추가) ==========
+        window.filterProducts = async function(category, event) {
+            currentCategory = category;
+            
+            // 카테고리 버튼 활성화 표시
+            document.querySelectorAll('.category-card').forEach(card => {
+                card.classList.remove('active-category');
+            });
+            
+            // event가 있으면 클릭된 요소를 활성화, 없으면 첫 번째 요소 활성화
+            if (event && event.target) {
+                const targetCard = event.target.closest('.category-card');
+                if (targetCard) {
+                    targetCard.classList.add('active-category');
+                }
+            }
+            
+            await loadProducts(true);
+            
+            const titles = {
+                'all': '최신 식물',
+                '관엽식물': '관엽식물',
+                '다육식물': '다육식물',
+                '화분/흙': '화분/용품'
+            };
+            
+            document.getElementById('sectionTitle').textContent = titles[category] || '최신 식물';
+        };
+
+        // ========== 정렬 ==========
+        window.sortProducts = async function(sort) {
+            currentSort = sort;
+            await loadProducts(true);
+            
+            document.getElementById('sortRecentBtn').className = sort === 'recent' ? 'text-green-600 font-medium' : 'text-gray-400 hover:text-green-600';
+            document.getElementById('sortPriceBtn').className = sort === 'price' ? 'text-green-600 font-medium' : 'text-gray-400 hover:text-green-600';
+            document.getElementById('sortLikesBtn').className = sort === 'likes' ? 'text-green-600 font-medium' : 'text-gray-400 hover:text-green-600';
+        };
+
+        // ========== 판매완료 토글 ==========
+        window.toggleSoldItems = async function() {
+            hideSoldItems = !hideSoldItems;
+            const btn = document.getElementById('hideSoldBtn');
+            
+            if (hideSoldItems) {
+                btn.innerHTML = '<i class="fas fa-eye-slash mr-1"></i>판매완료 숨김';
+                btn.classList.add('bg-green-100', 'text-green-700');
+                btn.classList.remove('bg-gray-100', 'text-gray-600');
+            } else {
+                btn.innerHTML = '<i class="fas fa-eye mr-1"></i>전체 보기';
+                btn.classList.remove('bg-green-100', 'text-green-700');
+                btn.classList.add('bg-gray-100', 'text-gray-600');
+            }
+            
+            await loadProducts(true);
+        };
+
+        // ========== 검색 결과 초기화 ==========
+        window.resetSearch = async function() {
+            currentCategory = 'all';
+            currentSort = 'recent';
+            document.getElementById('sectionTitle').textContent = '최신 식물';
+            
+            // 카테고리 초기화
+            document.querySelectorAll('.category-card').forEach(card => {
+                card.classList.remove('active-category');
+            });
+            document.querySelector('.category-card').classList.add('active-category');
+            
+            // 정렬 초기화
+            document.getElementById('sortRecentBtn').className = 'text-green-600 font-medium';
+            document.getElementById('sortPriceBtn').className = 'text-gray-400 hover:text-green-600';
+            document.getElementById('sortLikesBtn').className = 'text-gray-400 hover:text-green-600';
+            
+            await loadProducts(true);
+            showToast('전체 목록으로 돌아갑니다');
+        };
+
+        // ========== 무한 스크롤 (디바운싱 적용) ==========
+        const handleScroll = debounce(() => {
+            if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 500) {
+                if (!isLoading && hasMore) {
+                    loadProducts(false);
+                }
+            }
+            
+            // 상단으로 가기 버튼 표시
+            const scrollBtn = document.getElementById('scrollTopBtn');
+            if (window.scrollY > 500) {
+                scrollBtn.classList.remove('hidden');
+            } else {
+                scrollBtn.classList.add('hidden');
+            }
+        }, 200);
+
+        window.addEventListener('scroll', handleScroll);
+
+        // ========== 상단으로 가기 ==========
+        window.scrollToTop = function() {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        };
+
+        // ========== 검색 모달 ==========
+        window.openSearchModal = function() {
+            document.getElementById('searchModal').classList.remove('hidden');
+            const searchInput = document.getElementById('searchInput');
+            searchInput.focus();
+            
+            // 엔터키 이벤트 리스너 추가 (중복 방지)
+            searchInput.removeEventListener('keypress', handleSearchKeyPress);
+            searchInput.addEventListener('keypress', handleSearchKeyPress);
+        };
+        
+        // 검색 엔터키 핸들러
+        function handleSearchKeyPress(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchProducts();
+            }
+        }
+
+        window.closeSearchModal = function() {
+            document.getElementById('searchModal').classList.add('hidden');
+        };
+
+        window.searchProducts = async function() {
+            const keyword = document.getElementById('searchInput').value.trim();
+            if (!keyword) {
+                showToast('검색어를 입력해주세요', 'error');
+                return;
+            }
+            
+            saveRecentSearch(keyword);
+            
+            try {
+                // 로딩 표시
+                const container = document.getElementById('productGrid');
+                container.innerHTML = '';
+                showSkeletonLoading();
+                
+                // 최근 상품들 가져오기 (인덱스 불필요)
+                const q = query(
+                    collection(db, 'products'),
+                    orderBy('createdAt', 'desc'),
+                    limit(100)
+                );
+                
+                const snapshot = await getDocs(q);
+                
+                // 클라이언트에서 검색 필터링
+                const results = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .filter(product => 
+                        product.title?.toLowerCase().includes(keyword.toLowerCase()) ||
+                        product.description?.toLowerCase().includes(keyword.toLowerCase()) ||
+                        product.category?.toLowerCase().includes(keyword.toLowerCase())
+                    );
+                
+                hideSkeletonLoading();
+                closeSearchModal();
+                
+                if (results.length === 0) {
+                    container.innerHTML = `
+                        <div class="col-span-full text-center py-20">
+                            <div class="inline-block p-8 bg-gradient-to-br from-gray-50 to-gray-100 rounded-3xl mb-6">
+                                <i class="fas fa-search text-6xl text-gray-400 mb-4"></i>
+                            </div>
+                            <h3 class="text-2xl font-bold text-gray-800 mb-2">"${escapeHtml(keyword)}" 검색 결과가 없습니다</h3>
+                            <p class="text-gray-500 mb-6">다른 검색어로 시도해보세요</p>
+                            <button onclick="resetSearch()" class="bg-green-600 text-white px-6 py-3 rounded-xl hover:bg-green-700 transition">
+                                <i class="fas fa-redo mr-2"></i>전체 보기
+                            </button>
+                        </div>
+                    `;
+                    document.getElementById('sectionTitle').innerHTML = `
+                        "${escapeHtml(keyword)}" 검색 결과
+                        <button onclick="resetSearch()" class="ml-3 text-sm text-gray-500 hover:text-green-600">
+                            <i class="fas fa-redo mr-1"></i>전체 보기
+                        </button>
+                    `;
+                    document.getElementById('productCount').textContent = '0개 상품';
+                    return;
+                }
+                
+                container.innerHTML = '';
+                results.forEach(product => {
+                    container.innerHTML += createProductCard(product, product.id);
+                });
+                
+                document.getElementById('sectionTitle').innerHTML = `
+                    "${escapeHtml(keyword)}" 검색 결과
+                    <button onclick="resetSearch()" class="ml-3 text-sm text-gray-500 hover:text-green-600">
+                        <i class="fas fa-redo mr-1"></i>전체 보기
+                    </button>
+                `;
+                document.getElementById('productCount').textContent = `${results.length}개 상품`;
+                
+                showToast(`${results.length}개의 상품을 찾았습니다`);
+                
+            } catch (error) {
+                console.error('검색 오류:', error);
+                hideSkeletonLoading();
+                showToast('검색에 실패했습니다. 다시 시도해주세요.', 'error');
+            }
+        };
+
+        // ========== 최근 검색어 ==========
+        function loadRecentSearches() {
+            const searches = JSON.parse(localStorage.getItem('recentSearches') || '[]');
+            const container = document.getElementById('recentSearches');
+            
+            if (searches.length === 0) {
+                container.innerHTML = '<p class="text-sm text-gray-400">최근 검색어가 없습니다</p>';
+                return;
+            }
+            
+            container.innerHTML = searches.map(keyword => `
+                <button onclick="quickSearch('${escapeHtml(keyword)}')" 
+                        class="px-3 py-1.5 bg-gray-100 rounded-full text-sm text-gray-700 hover:bg-gray-200 transition">
+                    ${escapeHtml(keyword)}
+                </button>
+            `).join('');
+        }
+
+        function saveRecentSearch(keyword) {
+            let searches = JSON.parse(localStorage.getItem('recentSearches') || '[]');
+            searches = searches.filter(s => s !== keyword);
+            searches.unshift(keyword);
+            searches = searches.slice(0, 10);
+            localStorage.setItem('recentSearches', JSON.stringify(searches));
+            loadRecentSearches();
+        }
+
+        window.clearRecentSearches = function() {
+            localStorage.removeItem('recentSearches');
+            loadRecentSearches();
+            showToast('최근 검색어를 삭제했습니다');
+        };
+
+        window.quickSearch = function(keyword) {
+            document.getElementById('searchInput').value = keyword;
+            searchProducts();
+        };
+
+        // ========== 인기 검색어 ==========
+        function loadPopularKeywords() {
+            const keywords = ['몬스테라', '스투키', '다육이', '선인장', '화분'];
+            const container = document.getElementById('popularKeywords');
+            
+            container.innerHTML = keywords.map((keyword, idx) => `
+                <button onclick="quickSearch('${keyword}')" 
+                        class="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded-lg transition text-left">
+                    <span class="text-sm text-gray-700">
+                        <span class="inline-block w-5 text-green-600 font-bold">${idx + 1}</span>
+                        ${keyword}
+                    </span>
+                    <i class="fas fa-arrow-up text-green-600 text-xs"></i>
+                </button>
+            `).join('');
+        }
+
+        // ========== 관심식물(찜) 로드 ==========
+        window.loadFavorites = async function() {
+            console.log('관심식물 로드 시작');
+            
+            if (!currentUser) {
+                console.log('비로그인 상태');
+                const container = document.getElementById('productGrid');
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-20">
+                        <div class="inline-block p-8 bg-gradient-to-br from-pink-50 to-red-50 rounded-3xl mb-6">
+                            <i class="fas fa-heart text-6xl text-red-300 mb-4"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-800 mb-2">로그인이 필요합니다</h3>
+                        <p class="text-gray-500 mb-6">관심식물을 보려면 로그인해주세요</p>
+                        <button onclick="location.href='login.html'" class="bg-green-600 text-white px-8 py-4 rounded-xl hover:bg-green-700 transition shadow-lg">
+                            <i class="fas fa-sign-in-alt mr-2"></i>로그인하기
+                        </button>
+                    </div>
+                `;
+                document.getElementById('sectionTitle').textContent = '관심식물';
+                document.getElementById('productCount').textContent = '0개 상품';
+                return;
+            }
+
+            try {
+                const container = document.getElementById('productGrid');
+                container.innerHTML = '';
+                showSkeletonLoading();
+
+                // products 컬렉션에서 likedBy 배열에 현재 사용자가 있는 상품 조회
+                const likedQuery = query(
+                    collection(db, 'products'),
+                    where('likedBy', 'array-contains', currentUser.uid),
+                    orderBy('createdAt', 'desc'),
+                    limit(50)
+                );
+                
+                const snapshot = await getDocs(likedQuery);
+                console.log('찜한 상품 개수:', snapshot.size);
+                
+                hideSkeletonLoading();
+                
+                if (snapshot.empty) {
+                    container.innerHTML = `
+                        <div class="col-span-full text-center py-20">
+                            <div class="inline-block p-8 bg-gradient-to-br from-pink-50 to-red-50 rounded-3xl mb-6">
+                                <i class="fas fa-heart-broken text-6xl text-gray-300 mb-4"></i>
+                            </div>
+                            <h3 class="text-2xl font-bold text-gray-800 mb-2">찜한 식물이 없습니다</h3>
+                            <p class="text-gray-500 mb-6">마음에 드는 식물을 찜해보세요!</p>
+                            <button onclick="resetSearch()" class="bg-green-600 text-white px-8 py-4 rounded-xl hover:bg-green-700 transition shadow-lg">
+                                <i class="fas fa-seedling mr-2"></i>식물 둘러보기
+                            </button>
+                        </div>
+                    `;
+                    document.getElementById('sectionTitle').textContent = '관심식물';
+                    document.getElementById('productCount').textContent = '0개 상품';
+                    return;
+                }
+
+                const favoriteProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                
+                container.innerHTML = '';
+                favoriteProducts.forEach(product => {
+                    container.innerHTML += createProductCard(product, product.id);
+                });
+
+                document.getElementById('sectionTitle').textContent = '관심식물';
+                document.getElementById('productCount').textContent = `${favoriteProducts.length}개 상품`;
+
+            } catch (error) {
+                console.error('관심식물 로드 오류:', error);
+                
+                hideSkeletonLoading();
+                
+                const container = document.getElementById('productGrid');
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-20">
+                        <div class="inline-block p-8 bg-gradient-to-br from-red-50 to-orange-50 rounded-3xl mb-6">
+                            <i class="fas fa-exclamation-triangle text-6xl text-red-400 mb-4"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold text-gray-800 mb-2">오류가 발생했습니다</h3>
+                        <p class="text-gray-500 mb-2">${error.message}</p>
+                        <button onclick="loadFavorites()" class="bg-green-600 text-white px-6 py-3 rounded-xl hover:bg-green-700 transition">
+                            <i class="fas fa-redo mr-2"></i>다시 시도
+                        </button>
                     </div>
                 `;
                 
-                // 마이페이지 버튼 클릭 시 이동 설정
-                myPageBtn.onclick = () => { location.href = 'my-page.html'; };
-                
-                writeBtn?.classList.remove('hidden');
-                localSection?.classList.remove('hidden');
-            } else {
-                // [로그아웃 상태]
-                authButtons.innerHTML = `
-                    <a href="login.html" class="text-sm font-bold text-gray-600 hover:text-green-600">로그인/회원가입</a>
-                `;
-                
-                // 마이페이지 버튼 클릭 시 안내창 띄우기
-                myPageBtn.onclick = () => {
-                    alert("로그인이 필요한 서비스입니다. 로그인 페이지로 이동합니다.");
-                    location.href = 'login.html';
-                };
-
-                writeBtn?.classList.add('hidden');
-                localSection?.classList.add('hidden');
+                showToast('관심식물을 불러오는데 실패했습니다', 'error');
             }
-            displayProducts(); 
+        };
+
+        // ========== 위치 설정 모달 ==========
+        window.openLocationModal = function() {
+            document.getElementById('locationModal').classList.remove('hidden');
+            document.getElementById('currentLocationModal').textContent = myLocation?.address || '부산 해운대구';
+            document.body.style.overflow = 'hidden';
+        };
+
+        window.closeLocationModal = function() {
+            document.getElementById('locationModal').classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        };
+
+        window.updateLocationRange = function(newRange) {
+            locationRange = parseInt(newRange);
+            updateLocationUI();
+            closeLocationModal();
+            showToast(`거래 범위가 ${locationRange}km로 설정되었습니다`);
+        };
+
+        // ========== 플랜티아월드 소개 모달 ==========
+        window.openAboutModal = function() {
+            document.getElementById('aboutModal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        };
+
+        window.closeAboutModal = function() {
+            document.getElementById('aboutModal').classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        };
+
+        // ========== 키보드 이벤트 (ESC로 모달 닫기) ==========
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeAboutModal();
+                closeSearchModal();
+                closeLocationModal();
+            }
         });
 
-        // ========== 2. 상품 데이터 로드 및 정렬 로직 (기존과 동일) ==========
-        const productsRef = collection(db, 'products');
-        onSnapshot(query(productsRef, limit(100)), (snapshot) => {
-            allProducts = [];
-            snapshot.forEach((doc) => {
-                allProducts.push({ id: doc.id, ...doc.data() });
-            });
-            document.getElementById('loadingIndicator')?.classList.add('hidden');
-            document.getElementById('productGrid')?.classList.remove('hidden');
-            displayProducts();
+        // ========== 모달 외부 클릭 시 닫기 ==========
+        window.addEventListener('click', function(e) {
+            const aboutModal = document.getElementById('aboutModal');
+            if (e.target === aboutModal) {
+                closeAboutModal();
+            }
+            
+            const searchModal = document.getElementById('searchModal');
+            if (e.target === searchModal) {
+                closeSearchModal();
+            }
+            
+            const locationModal = document.getElementById('locationModal');
+            if (e.target === locationModal) {
+                closeLocationModal();
+            }
         });
-
-        window.displayProducts = function() {
-            const container = document.getElementById('productGrid');
-            if (!container) return;
-            let filtered = currentFilter === 'all' ? [...allProducts] : allProducts.filter(p => p.category === currentFilter);
-            filtered.sort((a, b) => {
-                if (currentSort === 'price') return (Number(a.price) || 0) - (Number(b.price) || 0);
-                const dateA = a.createdAt?.seconds ? a.createdAt.toDate() : new Date(a.createdAt || 0);
-                const dateB = b.createdAt?.seconds ? b.createdAt.toDate() : new Date(b.createdAt || 0);
-                return dateB - dateA;
-            });
-            document.getElementById('sectionTitle').textContent = currentFilter === 'all' ? '최신 식물' : currentFilter;
-            document.getElementById('productCount').textContent = `${filtered.length}개 상품`;
-            let html = filtered.map(p => createCardHtml(p)).join('');
-            if (auth.currentUser) {
-                html += `<div onclick="location.href='add-product.html'" class="product-card border-2 border-dashed border-green-200 rounded-2xl flex flex-col items-center justify-center p-6 text-green-600 hover:bg-green-50 min-h-[200px] cursor-pointer"><i class="fas fa-plus-circle text-3xl mb-2"></i><span class="font-medium text-sm">나도 등록하기</span></div>`;
-            }
-            container.innerHTML = html;
-            displayLocalProducts();
-        };
-
-        window.handleLogout = () => {
-            if(confirm('로그아웃 하시겠습니까?')) {
-                signOut(auth).then(() => {
-                    alert('로그아웃 되었습니다.');
-                    location.reload();
-                });
-            }
-        };
-
-        window.filterProducts = (cat) => { currentFilter = cat; displayProducts(); };
-        window.sortProducts = (type) => { 
-            currentSort = type; 
-            document.getElementById('sortRecentBtn').className = type === 'recent' ? 'text-green-600 font-medium' : 'text-gray-400 hover:text-green-600';
-            document.getElementById('sortPriceBtn').className = type === 'price' ? 'text-green-600 font-medium' : 'text-gray-400 hover:text-green-600';
-            displayProducts(); 
-        };
     </script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
-        body { font-family: 'Noto Sans KR', sans-serif; }
-        .plant-gradient { background: linear-gradient(135deg, #f8fdf8 0%, #e8f5e9 100%); }
-        .btn-primary { background: linear-gradient(135deg, #2e8b57 0%, #32cd32 100%); transition: all 0.3s ease; }
-        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(34, 139, 34, 0.3); }
-        .category-card { transition: all 0.3s ease; border: 2px solid transparent; cursor: pointer; }
-        .category-card:hover { transform: translateY(-8px); border-color: #2e8b57; box-shadow: 0 20px 40px rgba(46, 139, 87, 0.15); }
-        .product-card { transition: all 0.2s ease; height: 100%; cursor: pointer; }
-        .product-card:hover { transform: translateY(-4px); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1); }
-        .hidden { display: none !important; }
-        .loading-spinner { border: 3px solid #f3f3f3; border-top: 3px solid #2e8b57; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .product-image-container { position: relative; padding-bottom: 100%; overflow: hidden; }
-        .product-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
+        
+        * {
+            font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(to bottom, #f0fdf4, #ffffff);
+        }
+        
+        .product-card {
+            cursor: pointer;
+        }
+        
+        .product-card:hover {
+            transform: translateY(-4px);
+        }
+        
+        .category-card {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .category-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .category-card.active-category {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+        }
+        
+        .category-card.active-category i {
+            color: white;
+        }
+        
+        .category-card.active-category h3 {
+            color: white;
+        }
+        
+        .category-card.active-category .bg-green-50 {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        .hidden { 
+            display: none !important; 
+        }
+        
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 12px;
+            color: white;
+            font-weight: 500;
+            z-index: 9999;
+            animation: slideIn 0.3s ease-out;
+            display: flex;
+            align-items: center;
+            max-width: 90%;
+        }
+        
+        .toast-success { background-color: #10b981; }
+        .toast-error { background-color: #ef4444; }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .floating-write-btn, .scroll-top-btn {
+            position: fixed;
+            right: 20px;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 25px rgba(22, 163, 74, 0.4);
+            cursor: pointer;
+            z-index: 40;
+            transition: all 0.3s ease;
+        }
+        
+        .floating-write-btn {
+            bottom: 80px;
+        }
+        
+        .scroll-top-btn {
+            bottom: 155px;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4);
+        }
+        
+        .floating-write-btn:hover, .scroll-top-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 20px;
+            max-width: 600px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        
+        .product-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .intro-section {
+            padding: 2rem;
+            border-radius: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .value-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border-left: 4px solid #10b981;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+        }
+
+        .value-card:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .value-card h4 {
+            color: #10b981;
+            font-weight: 700;
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        @media (max-width: 640px) {
+            .header-actions {
+                gap: 0.5rem;
+            }
+            
+            .header-btn {
+                font-size: 0.75rem;
+                padding: 0.5rem 0.75rem;
+            }
+            
+            .scroll-top-btn {
+                width: 50px;
+                height: 50px;
+                bottom: 145px;
+            }
+            
+            .floating-write-btn {
+                width: 50px;
+                height: 50px;
+            }
+            
+            /* 모바일에서 카테고리 그리드 조정 */
+            .category-grid {
+                grid-template-columns: repeat(5, 1fr);
+                gap: 0.5rem;
+            }
+            
+            .category-card {
+                padding: 0.75rem 0.5rem;
+            }
+            
+            .category-card .w-12 {
+                width: 2.5rem;
+                height: 2.5rem;
+            }
+            
+            .category-card h3 {
+                font-size: 0.65rem;
+            }
+        }
     </style>
 </head>
-<body class="plant-gradient min-h-screen">
+<body class="min-h-screen pb-20">
 
+    <!-- 헤더 -->
     <header class="bg-white shadow-sm sticky top-0 z-50">
-        <div class="container mx-auto px-4 py-3 flex items-center justify-between">
-            <a href="index.html" class="flex items-center space-x-2">
-                <div class="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center">
-                    <i class="fas fa-leaf text-white"></i>
+        <div class="container mx-auto px-4 py-3">
+            <div class="flex items-center justify-between mb-3">
+                <a href="index.html" class="flex items-center gap-2">
+                    <div class="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-400 rounded-xl flex items-center justify-center shadow-lg">
+                        <i class="fas fa-leaf text-white text-lg"></i>
+                    </div>
+                    <div class="hidden sm:block">
+                        <h1 class="text-xl font-bold text-green-800 leading-tight">PlantiaWorld</h1>
+                        <p class="text-[10px] text-gray-500">이웃과 식물을 나누는 공간</p>
+                    </div>
+                </a>
+                
+                <div class="flex items-center gap-2 header-actions">
+                    <button id="myPageBtn" class="header-btn text-gray-600 hover:text-green-700 flex items-center gap-1">
+                        <i class="fas fa-user-circle text-lg"></i>
+                        <span class="hidden sm:inline text-sm font-medium">마이</span>
+                    </button>
+                    <button id="writeBtn" class="hidden header-btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl font-medium transition" 
+                            onclick="location.href='add-product.html'">
+                        <i class="fas fa-plus mr-1"></i>
+                        <span class="hidden sm:inline">글쓰기</span>
+                    </button>
+                    <div id="authButtons"></div>
                 </div>
-                <div>
-                    <h1 class="text-xl font-bold text-green-800 leading-tight">PlantiaWorld</h1>
-                    <p class="text-[10px] text-gray-500">이웃과 식물을 나누는 공간</p>
-                </div>
-            </a>
-            <div class="flex items-center space-x-4">
-                <button id="myPageBtn" class="flex items-center text-gray-600 hover:text-green-700">
-                    <i class="fas fa-user-circle mr-1 text-lg"></i><span class="text-sm font-medium">마이페이지</span>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <button onclick="openLocationModal()" class="flex items-center gap-2 text-gray-700 hover:text-green-600 transition">
+                    <i class="fas fa-map-marker-alt text-green-600"></i>
+                    <span id="currentLocation" class="font-medium text-sm">부산 해운대구</span>
+                    <span id="locationRange" class="text-xs text-gray-500 bg-green-50 px-2 py-0.5 rounded-full">5km</span>
+                    <i class="fas fa-chevron-down text-xs"></i>
                 </button>
-                <button id="writeBtn" class="hidden btn-primary text-white px-5 py-2 rounded-full text-sm font-medium" onclick="location.href='add-product.html'">
-                    <i class="fas fa-plus mr-1"></i>글쓰기
+                
+                <button onclick="openSearchModal()" class="flex-1 bg-gray-100 rounded-xl px-4 py-2.5 text-left text-gray-500 hover:bg-gray-200 transition">
+                    <i class="fas fa-search mr-2"></i>
+                    <span class="text-sm">식물 검색...</span>
                 </button>
-                <div id="authButtons"></div>
             </div>
         </div>
     </header>
 
-    <main class="container mx-auto px-4 py-8">
-        <section class="mb-12">
-            <h2 class="text-xl font-bold text-gray-800 mb-6 flex items-center"><span class="w-1 h-6 bg-green-500 rounded-full mr-2"></span>카테고리별 둘러보기</h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div class="category-card bg-white rounded-2xl p-6 text-center shadow-sm" onclick="filterProducts('관엽식물')"><div class="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-seedling text-green-600 text-xl"></i></div><h3 class="font-bold text-gray-800 text-sm">관엽식물</h3></div>
-                <div class="category-card bg-white rounded-2xl p-6 text-center shadow-sm" onclick="filterProducts('다육식물')"><div class="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-spa text-green-600 text-xl"></i></div><h3 class="font-bold text-gray-800 text-sm">다육식물</h3></div>
-                <div class="category-card bg-white rounded-2xl p-6 text-center shadow-sm" onclick="filterProducts('화분/흙')"><div class="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-tint text-green-600 text-xl"></i></div><h3 class="font-bold text-gray-800 text-sm">화분/용품</h3></div>
-                <div class="category-card bg-white rounded-2xl p-6 text-center shadow-sm" onclick="filterProducts('정보공유')"><div class="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-3"><i class="fas fa-book text-green-600 text-xl"></i></div><h3 class="font-bold text-gray-800 text-sm">정보공유</h3></div>
+    <!-- 메인 컨텐츠 -->
+    <main class="container mx-auto px-4 py-6">
+        <!-- 이벤트 배너 -->
+        <section class="mb-6">
+            <div class="bg-gradient-to-r from-green-500 to-emerald-400 rounded-2xl p-6 text-white shadow-lg hover:shadow-xl transition cursor-pointer" onclick="openAboutModal()">
+                <h3 class="text-xl font-bold mb-2">🌱 당신의 일상에 초록을 더하다</h3>
+                <p class="text-sm opacity-90 mb-3">오늘 당신의 초록을 공유했나요?</p>
+                <button onclick="event.stopPropagation(); openAboutModal()" class="bg-white text-green-600 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-100 transition">
+                    자세히 보기
+                </button>
             </div>
         </section>
 
-        <section class="mb-10">
-            <div class="flex justify-between items-end mb-6 border-b pb-4">
-                <h2 class="text-2xl font-bold text-gray-800" id="sectionTitle">최신 식물</h2>
-                <div class="flex items-center space-x-4 text-sm">
-                    <span id="productCount" class="text-gray-500">0개 상품</span>
-                    <button id="sortRecentBtn" class="text-green-600 font-medium" onclick="sortProducts('recent')">최신순</button>
-                    <button id="sortPriceBtn" class="text-gray-400 hover:text-green-600" onclick="sortProducts('price')">가격순</button>
+        <!-- 카테고리 -->
+        <section class="mb-8">
+            <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
+                <span class="w-1 h-6 bg-green-500 rounded-full mr-2"></span>카테고리
+            </h2>
+            <div class="category-grid grid grid-cols-5 gap-3">
+                <div class="category-card active-category bg-white rounded-2xl p-4 text-center shadow-sm" onclick="filterProducts('all', event)">
+                    <div class="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <i class="fas fa-th text-green-600 text-lg"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-xs">전체</h3>
+                </div>
+                <div class="category-card bg-white rounded-2xl p-4 text-center shadow-sm" onclick="filterProducts('관엽식물', event)">
+                    <div class="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <i class="fas fa-seedling text-green-600 text-lg"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-xs">관엽식물</h3>
+                </div>
+                <div class="category-card bg-white rounded-2xl p-4 text-center shadow-sm" onclick="filterProducts('다육식물', event)">
+                    <div class="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <i class="fas fa-spa text-green-600 text-lg"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-xs">다육식물</h3>
+                </div>
+                <div class="category-card bg-white rounded-2xl p-4 text-center shadow-sm" onclick="filterProducts('화분/흙', event)">
+                    <div class="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <i class="fas fa-tint text-green-600 text-lg"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-xs">화분/용품</h3>
+                </div>
+                <div class="category-card bg-white rounded-2xl p-4 text-center shadow-sm" onclick="event.stopPropagation(); document.querySelectorAll('.category-card').forEach(c => c.classList.remove('active-category')); this.classList.add('active-category'); loadFavorites();">
+                    <div class="w-12 h-12 bg-pink-50 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <i class="fas fa-heart text-pink-600 text-lg"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-xs">관심식물</h3>
                 </div>
             </div>
-            <div id="loadingIndicator"><div class="loading-spinner"></div></div>
-            <div id="productGrid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 hidden"></div>
         </section>
 
-        <section id="localProductsSection" class="mb-10 hidden bg-white rounded-3xl p-8 shadow-sm">
-            <h2 class="text-xl font-bold text-gray-800 mb-6"><i class="fas fa-map-marker-alt text-green-600 mr-2"></i>우리 동네 인기 상품</h2>
-            <div id="localProductGrid" class="grid grid-cols-2 md:grid-cols-6 gap-4"></div>
+        <!-- 상품 목록 -->
+        <section>
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="sectionTitle" class="text-lg font-bold text-gray-800">최신 식물</h2>
+                <div class="flex items-center gap-3 text-sm">
+                    <span id="productCount" class="text-gray-500">0개</span>
+                    <button id="hideSoldBtn" onclick="toggleSoldItems()" class="px-3 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs hover:bg-gray-200 transition">
+                        <i class="fas fa-eye mr-1"></i>전체 보기
+                    </button>
+                    <button id="sortRecentBtn" class="text-green-600 font-medium" onclick="sortProducts('recent')">최신순</button>
+                    <button id="sortPriceBtn" class="text-gray-400 hover:text-green-600" onclick="sortProducts('price')">가격순</button>
+                    <button id="sortLikesBtn" class="text-gray-400 hover:text-green-600" onclick="sortProducts('likes')">인기순</button>
+                </div>
+            </div>
+            
+            <div id="productGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"></div>
+            
+            <!-- 네트워크 오류 -->
+            <div id="networkError" class="hidden text-center py-20">
+                <i class="fas fa-wifi-slash text-6xl text-gray-400 mb-4"></i>
+                <p class="text-gray-600 mb-2 text-lg">네트워크 연결을 확인해주세요</p>
+                <p class="text-gray-500 text-sm mb-6">인터넷 연결이 불안정합니다</p>
+                <button onclick="retryLoadProducts()" class="bg-green-600 text-white px-6 py-3 rounded-xl hover:bg-green-700 transition">
+                    <i class="fas fa-redo mr-2"></i>다시 시도
+                </button>
+            </div>
+            
+            <!-- 로딩 인디케이터 -->
+            <div id="loadingMore" class="hidden text-center py-8">
+                <div class="inline-block w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-gray-500 text-sm mt-2">더 불러오는 중...</p>
+            </div>
         </section>
-        </main>
+    </main>
 
-            <footer class="bg-gray-900 text-white py-12 mt-20">
-             <div class="container mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-8 text-sm">
-             <div>
+    <!-- Footer -->
+    <footer class="bg-gray-900 text-white py-12 mt-20">
+        <div class="container mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-8 text-sm">
+            <div>
                 <div class="flex items-center space-x-2 mb-4">
                     <i class="fas fa-leaf text-green-500 text-xl"></i>
                     <h3 class="text-lg font-bold">PlantiaWorld</h3>
@@ -207,7 +1175,7 @@
             <div>
                 <h4 class="font-bold mb-4">고객지원</h4>
                 <ul class="space-y-2 text-gray-400">
-                    <li><i class="fas fa-envelope mr-2"></i>inf-plantiaworld@gmail.com</li>
+                    <li><i class="fas fa-envelope mr-2"></i><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="39495558574d50584e564b555d795e54585055175a5654">[email&#160;protected]</a></li>
                     <li><i class="fas fa-phone mr-2"></i>010-3024-7442</li>
                 </ul>
             </div>
@@ -217,16 +1185,165 @@
         </div>
     </footer>
 
-         <script>
-        function createCardHtml(p) {
-            const thumbnail = (p.images && p.images.length > 0) ? p.images[0] : 'https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=400';
-            const isFree = Number(p.price) === 0;
-            return `<div class="product-card bg-white rounded-2xl overflow-hidden shadow-sm flex flex-col" onclick="location.href='product-detail.html?id=${p.id}'"><div class="product-image-container"><img src="${thumbnail}" class="product-image" alt="식물">${isFree ? '<div class="absolute top-2 left-2 bg-green-600 text-white px-2 py-1 rounded-lg text-[10px] font-bold">무료나눔</div>' : ''}</div><div class="p-4 flex flex-col flex-grow"><h3 class="text-sm font-semibold text-gray-800 line-clamp-2 mb-2">${p.title || '식물'}</h3><p class="text-green-700 font-bold mt-auto">${isFree ? '나눔 🌱' : Number(p.price).toLocaleString() + '원'}</p><p class="text-[10px] text-gray-400 mt-1"><i class="fas fa-map-marker-alt mr-1"></i>${p.location || '지역미정'}</p></div></div>`;
-        }
-        function displayLocalProducts() {
-            const grid = document.getElementById('localProductGrid');
-            if(grid) { const localItems = allProducts.slice(0, 6); grid.innerHTML = localItems.map(p => createCardHtml(p)).join(''); }
-        }
-    </script>
-</body>
-</html>
+    <!-- 플로팅 버튼들 -->
+    <button id="scrollTopBtn" class="scroll-top-btn hidden" onclick="scrollToTop()" aria-label="맨 위로">
+        <i class="fas fa-arrow-up text-white text-xl"></i>
+    </button>
+
+    <button id="floatingWriteBtn" class="floating-write-btn hidden" onclick="location.href='add-product.html'" aria-label="글쓰기">
+        <i class="fas fa-plus text-white text-2xl"></i>
+    </button>
+
+    <!-- 플랜티아월드 소개 모달 -->
+    <div id="aboutModal" class="modal hidden" role="dialog" aria-labelledby="aboutModalTitle">
+        <div class="modal-content">
+            <div class="sticky top-0 bg-gradient-to-r from-green-500 to-emerald-400 text-white p-6 rounded-t-2xl">
+                <div class="flex items-center justify-between mb-2">
+                    <h2 id="aboutModalTitle" class="text-2xl font-bold flex items-center gap-2">
+                        <i class="fas fa-leaf"></i>
+                        PlantiaWorld
+                    </h2>
+                    <button onclick="closeAboutModal()" class="text-white hover:bg-white/20 rounded-full p-2 transition" aria-label="닫기">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+                <p class="text-sm opacity-90">이웃과 식물을 나누는 동네 식물 공동체</p>
+            </div>
+
+            <div class="p-6">
+                <div class="intro-section bg-gradient-to-br from-green-50 to-emerald-50">
+                    <div class="text-center mb-4">
+                        <i class="fas fa-seedling text-5xl text-green-600 mb-3"></i>
+                        <h3 class="text-xl font-bold text-gray-800 mb-3">식물을 키우는 즐거움,<br>이제 함께 나눠볼까요?</h3>
+                    </div>
+                    <p class="text-gray-700 leading-relaxed text-center">
+                        정성껏 키운 초록이 하나, 건강하게 자라 분갈이가 필요한 화분. 혼자만 보기 아까운 그 예쁜 마음을 가까운 이웃과 나눠보세요. 
+                        <br><br>
+                        <strong class="text-green-600">플랜티아월드</strong>는 단순히 식물을 공유하는 곳을 넘어, 초록빛 일상을 공유하며 함께 치유받는 <strong>'동네 식물 공동체'</strong>입니다.
+                        <br><br>
+                        오늘 당신의 곁에 있는 식물이 누군가에게는 새로운 설렘이, 당신에게는 따뜻한 이웃과의 연결이 됩니다.
+                    </p>
+                </div>
+
+                <div class="mb-6">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-4 text-center">
+                        <i class="fas fa-heart text-red-500 mr-2"></i>
+                        플랜티아월드 핵심 가치
+                    </h3>
+
+                    <div class="value-card">
+                        <h4>
+                            <i class="fas fa-handshake mr-2"></i>
+                            가까운 연결
+                        </h4>
+                        <p class="text-gray-600 font-medium mb-2">"슬리퍼 신고 만나는 초록 인연"</p>
+                        <p class="text-gray-500 text-sm leading-relaxed">
+                            멀리 갈 필요 없어요. 우리 동네 식집사들과 가볍게 만나 나눔의 기쁨을 누리세요.
+                        </p>
+                    </div>
+
+                    <div class="value-card">
+                        <h4>
+                            <i class="fas fa-spa mr-2"></i>
+                            마음 치유
+                        </h4>
+                        <p class="text-gray-600 font-medium mb-2">"식물로 대화하고 마음으로 공감해요"</p>
+                        <p class="text-gray-500 text-sm leading-relaxed">
+                            식물 상담부터 나눔까지, 함께라서 더 즐거운 힐링 가드닝 라이프가 펼쳐집니다.
+                        </p>
+                    </div>
+
+                    <div class="value-card">
+                        <h4>
+                            <i class="fas fa-recycle mr-2"></i>
+                            지속 가능성
+                        </h4>
+                        <p class="text-gray-600 font-medium mb-2">"버려지는 식물 없는 세상"</p>
+                        <p class="text-gray-500 text-sm leading-relaxed">
+                            더 이상 키우기 힘들거나 공간이 부족할 때, 플랜티아월드에서 새로운 가족을 찾아주세요.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="text-center">
+                    <button onclick="closeAboutModal(); location.href='add-product.html';" 
+                            class="bg-gradient-to-r from-green-500 to-emerald-400 text-white px-8 py-4 rounded-xl font-bold text-lg hover:shadow-lg transition">
+                        <i class="fas fa-plus mr-2"></i>지금 바로 나눔 시작하기
+                    </button>
+                    <p class="text-sm text-gray-500 mt-3">당신의 초록을 기다리는 이웃이 있습니다 🌱</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 검색 모달 -->
+    <div id="searchModal" class="modal hidden" role="dialog" aria-labelledby="searchModalTitle">
+        <div class="modal-content p-6">
+            <div class="flex items-center gap-3 mb-6">
+                <button onclick="closeSearchModal()" class="text-gray-400 hover:text-gray-600 p-2" aria-label="뒤로가기">
+                    <i class="fas fa-arrow-left text-xl"></i>
+                </button>
+                <div class="flex-1 flex items-center gap-2 bg-gray-100 rounded-xl px-4 py-3">
+                    <i class="fas fa-search text-gray-400"></i>
+                    <input type="text" id="searchInput" placeholder="식물 검색..." 
+                           class="flex-1 bg-transparent outline-none text-sm"
+                           aria-label="검색어 입력">
+                </div>
+                <button onclick="searchProducts()" 
+                        class="bg-green-600 text-white px-4 py-3 rounded-xl hover:bg-green-700 transition shadow-sm active:scale-95">
+                    <i class="fas fa-search"></i>
+                </button>
+            </div>
+            
+            <div class="mb-6">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-bold text-gray-800">최근 검색어</h3>
+                    <button onclick="clearRecentSearches()" class="text-xs text-gray-500 hover:text-gray-700">전체 삭제</button>
+                </div>
+                <div id="recentSearches" class="flex flex-wrap gap-2"></div>
+            </div>
+            
+            <div>
+                <h3 class="font-bold text-gray-800 mb-3">
+                    <i class="fas fa-fire text-orange-500 mr-2"></i>인기 검색어
+                </h3>
+                <div id="popularKeywords" class="space-y-1"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 동네 설정 모달 -->
+    <div id="locationModal" class="modal hidden" role="dialog" aria-labelledby="locationModalTitle">
+        <div class="modal-content p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h3 id="locationModalTitle" class="text-xl font-bold text-gray-800">
+                    <i class="fas fa-map-marker-alt text-green-600 mr-2"></i>동네 설정
+                </h3>
+                <button onclick="closeLocationModal()" class="text-gray-400 hover:text-gray-600" aria-label="닫기">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <div class="mb-6">
+                <p class="text-sm text-gray-600 mb-4">현재 위치: <span id="currentLocationModal" class="font-bold">부산 해운대구</span></p>
+                
+                <label class="block text-sm font-bold text-gray-600 mb-2">거래 가능 거리</label>
+                <div class="flex items-center gap-4">
+                    <input type="range" min="1" max="20" value="5" 
+                           class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                           oninput="document.getElementById('rangeValue').textContent = this.value + 'km'"
+                           aria-label="거래 범위 설정">
+                    <span id="rangeValue" class="text-sm font-bold text-green-600 w-16">5km</span>
+                </div>
+                <div class="flex justify-between text-xs text-gray-500 mt-2">
+                    <span>가까운 동네</span>
+                    <span>먼 동네</span>
+                </div>
+            </div>
+            
+            <div class="flex gap-3">
+                <button onclick="closeLocationModal()" class="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl hover:bg-gray-200 transition">
+                    취소
+                </button>
+                <button onclick="updateLocationRange(document.querySelector('input[type=range]').value)" 
+                        class="flex-1 bg-green-600 text-white py-3 rounded-xl hover:bg-green-700 transition">
