@@ -399,7 +399,7 @@
         onAuthStateChanged(auth, async (user) => {
             if (!user) {
                 alert("로그인이 필요한 서비스입니다.");
-                location.href = "login.html";
+                window.location.href = "login.html";
                 return;
             }
             
@@ -422,7 +422,7 @@
                 
                 if (!productSnap.exists()) {
                     alert('상품을 찾을 수 없습니다.');
-                    location.href = 'index.html';
+                    window.location.href = 'index.html';
                     return;
                 }
                 
@@ -431,7 +431,7 @@
                 // 권한 확인 (본인 상품만 수정 가능)
                 if (product.sellerId !== currentUser.uid) {
                     alert('본인의 상품만 수정할 수 있습니다.');
-                    location.href = 'index.html';
+                    window.location.href = 'index.html';
                     return;
                 }
                 
@@ -486,7 +486,7 @@
                 console.error('❌ 데이터 로드 오류:', error);
                 alert('데이터를 불러오는데 실패했습니다.');
                 hideLoading();
-                location.href = 'index.html';
+                window.location.href = 'index.html';
             }
         }
 
@@ -721,7 +721,7 @@
                     showToast("🌱 상품이 성공적으로 수정되었습니다!");
                     
                     setTimeout(() => {
-                        location.href = `product-detail.html?id=${productId}`;
+                        window.location.href = `product-detail.html?id=${productId}`;
                     }, 1000);
                     
                 } else {
@@ -739,7 +739,7 @@
                     showToast("🌱 상품이 성공적으로 등록되었습니다!");
                     
                     setTimeout(() => {
-                        location.href = `product-detail.html?id=${docRef.id}`;
+                        window.location.href = `product-detail.html?id=${docRef.id}`;
                     }, 1000);
                 }
                 
@@ -764,7 +764,7 @@
                 showToast('상품이 삭제되었습니다');
                 
                 setTimeout(() => {
-                    location.href = 'index.html';
+                    window.location.href = 'index.html';
                 }, 1000);
             } catch (error) {
                 console.error('❌ 삭제 오류:', error);
@@ -776,9 +776,9 @@
         // ========== 뒤로가기 ==========
         window.goBack = function() {
             if (isEditMode) {
-                location.href = `product-detail.html?id=${productId}`;
+                window.location.href = `product-detail.html?id=${productId}`;
             } else {
-                location.href = 'index.html';
+                window.location.href = 'index.html';
             }
         };
 
