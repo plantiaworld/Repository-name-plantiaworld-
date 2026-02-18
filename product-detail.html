@@ -13,7 +13,9 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { 
             getAuth, 
-            onAuthStateChanged 
+            onAuthStateChanged,
+            setPersistence,
+            browserLocalPersistence
         } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -48,6 +50,9 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
+
+        // ✅ 자동 로그아웃 방지 - 로그인 상태 영구 유지
+        await setPersistence(auth, browserLocalPersistence);
 
         // ========== 전역 변수 ==========
         let currentUser = null;
@@ -157,15 +162,19 @@
                         
                         console.log('✅ 상품 데이터:', currentProduct);
                         
-                        // 조회수 증가 (최초 한 번만)
+                        // ✅ 조회수 증가 (최초 한 번만) - views, viewCount 동시 업데이트
                         if (!hasIncrementedView && !sessionStorage.getItem(`viewed_${productId}`)) {
                             hasIncrementedView = true;
                             try {
-                                await updateDoc(productRef, { views: increment(1) });
+                                await updateDoc(productRef, { 
+                                    views: increment(1),
+                                    viewCount: increment(1)
+                                });
                                 sessionStorage.setItem(`viewed_${productId}`, 'true');
                                 console.log('👁️ 조회수 증가 완료');
                             } catch (error) {
-                                console.error('❌ 조회수 증가 오류:', error);
+                                // 오류 발생해도 무시 (비로그인 사용자 등)
+                                console.warn('⚠️ 조회수 증가 실패 (무시됨):', error.message);
                             }
                         }
                         
@@ -587,11 +596,16 @@
             
             if (!currentProduct) return;
             
+            // ✅ 버튼 중복 클릭 방지
+            const likeBtn = document.getElementById('likeBtn');
+            if (likeBtn) likeBtn.disabled = true;
+            
             try {
                 const productRef = doc(db, 'products', productId);
                 const isLiked = currentProduct.likedBy && currentProduct.likedBy.includes(currentUser.uid);
                 
                 if (isLiked) {
+                    // ✅ likedBy와 likeCount 동시 업데이트 (규칙에 둘 다 허용됨)
                     await updateDoc(productRef, {
                         likedBy: arrayRemove(currentUser.uid),
                         likeCount: increment(-1)
@@ -606,7 +620,14 @@
                 }
             } catch (error) {
                 console.error('❌ 좋아요 오류:', error);
-                showToast('오류가 발생했습니다', 'error');
+                if (error.code === 'permission-denied') {
+                    showToast('권한이 없습니다. 다시 로그인해주세요.', 'error');
+                } else {
+                    showToast('오류가 발생했습니다', 'error');
+                }
+            } finally {
+                // ✅ 버튼 다시 활성화
+                if (likeBtn) likeBtn.disabled = false;
             }
         };
 
