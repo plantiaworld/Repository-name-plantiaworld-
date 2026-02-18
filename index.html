@@ -185,39 +185,70 @@
             }
 
             try {
-                let q = collection(db, 'products');
-                let constraints = [];
+                // ✅ 인덱스 불필요 전략:
+                // - 서버: createdAt 단일 필드 정렬 + limit (인덱스 불필요)
+                // - 클라이언트: 카테고리 필터, 정렬, 판매완료 숨김 처리
                 
-                // 카테고리 필터
-                if (currentCategory !== 'all') {
-                    constraints.push(where('category', '==', currentCategory));
+                // 카테고리/정렬에 따라 서버에서 충분히 가져오기
+                const fetchLimit = currentCategory !== 'all' ? 200 : 
+                                   (currentSort === 'likes' ? 200 : ITEMS_PER_PAGE + 10);
+                
+                let constraints = [
+                    orderBy('createdAt', 'desc'),
+                    limit(fetchLimit)
+                ];
+                
+                // 페이징 (전체 카테고리 + 최신순일 때만 서버 페이징 적용)
+                if (lastVisible && currentCategory === 'all' && currentSort === 'recent') {
+                    constraints = [orderBy('createdAt', 'desc'), startAfter(lastVisible), limit(ITEMS_PER_PAGE)];
                 }
                 
-                // 복합 인덱스 문제 방지: 단순 정렬만 서버에서, 나머지는 클라이언트
-                const needClientSort = currentSort === 'likes' || 
-                    (currentSort === 'price' && currentCategory !== 'all');
-                
-                if (!needClientSort && currentSort === 'price') {
-                    constraints.push(orderBy('price', 'asc'));
-                } else {
-                    constraints.push(orderBy('createdAt', 'desc'));
-                }
-                
-                // 페이징
-                if (lastVisible) {
-                    constraints.push(startAfter(lastVisible));
-                }
-                
-                const fetchLimit = needClientSort ? ITEMS_PER_PAGE * 3 : ITEMS_PER_PAGE;
-                constraints.push(limit(fetchLimit));
-                
-                const finalQuery = query(q, ...constraints);
+                const finalQuery = query(collection(db, 'products'), ...constraints);
                 const snapshot = await getDocs(finalQuery);
                 
                 hideSkeletonLoading();
                 document.getElementById('loadingMore').classList.add('hidden');
                 
-                if (snapshot.empty && reset) {
+                // 전체 데이터를 배열로 변환
+                let products = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                
+                // 1. 카테고리 필터 (클라이언트)
+                if (currentCategory !== 'all') {
+                    products = products.filter(p => p.category === currentCategory);
+                }
+                
+                // 2. 판매완료 숨김 (클라이언트)
+                if (hideSoldItems) {
+                    products = products.filter(p => p.status !== '판매완료');
+                }
+                
+                // 3. 정렬 (클라이언트)
+                if (currentSort === 'price') {
+                    products.sort((a, b) => (a.price || 0) - (b.price || 0));
+                } else if (currentSort === 'likes') {
+                    products.sort((a, b) => {
+                        const aL = typeof a.likeCount === 'number' ? a.likeCount : (Array.isArray(a.likedBy) ? a.likedBy.length : 0);
+                        const bL = typeof b.likeCount === 'number' ? b.likeCount : (Array.isArray(b.likedBy) ? b.likedBy.length : 0);
+                        return bL - aL;
+                    });
+                }
+                // recent는 이미 서버에서 정렬됨
+                
+                // 4. 페이징 처리
+                const totalCount = products.length;
+                if (currentCategory !== 'all' || currentSort !== 'recent') {
+                    // 클라이언트 페이징
+                    const page = reset ? 0 : Math.floor((document.getElementById('productGrid').children.length) / ITEMS_PER_PAGE);
+                    products = products.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
+                    hasMore = (page + 1) * ITEMS_PER_PAGE < totalCount;
+                } else {
+                    // 서버 페이징
+                    lastVisible = snapshot.docs[snapshot.docs.length - 1];
+                    hasMore = snapshot.docs.length >= ITEMS_PER_PAGE;
+                    products = products.slice(0, ITEMS_PER_PAGE);
+                }
+                
+                if (products.length === 0 && reset) {
                     document.getElementById('productGrid').innerHTML = `
                         <div class="col-span-full text-center py-20">
                             <div class="inline-block p-8 bg-gradient-to-br from-green-50 to-emerald-50 rounded-3xl mb-6">
@@ -240,38 +271,6 @@
                     isLoading = false;
                     return;
                 }
-                
-                if (snapshot.docs.length < ITEMS_PER_PAGE) {
-                    hasMore = false;
-                }
-                
-                lastVisible = snapshot.docs[snapshot.docs.length - 1];
-                
-                // 문서를 배열로 변환
-                let products = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                
-                // 클라이언트 정렬 처리
-                if (currentSort === 'likes') {
-                    products.sort((a, b) => {
-                        const aLikes = typeof a.likeCount === 'number' ? a.likeCount : 
-                            (Array.isArray(a.likedBy) ? a.likedBy.length : 0);
-                        const bLikes = typeof b.likeCount === 'number' ? b.likeCount :
-                            (Array.isArray(b.likedBy) ? b.likedBy.length : 0);
-                        return bLikes - aLikes;
-                    });
-                } else if (currentSort === 'price' && currentCategory !== 'all') {
-                    products.sort((a, b) => (a.price || 0) - (b.price || 0));
-                }
-                
-                // 판매완료 숨김 (클라이언트 필터)
-                if (hideSoldItems) {
-                    products = products.filter(p => p.status !== '판매완료');
-                }
-                
-                products = products.slice(0, ITEMS_PER_PAGE);
                 
                 const container = document.getElementById('productGrid');
                 container.classList.remove('hidden');
@@ -697,12 +696,11 @@
                 container.innerHTML = '';
                 showSkeletonLoading();
 
-                // products 컬렉션에서 likedBy 배열에 현재 사용자가 있는 상품 조회
+                // array-contains + orderBy 조합은 인덱스 필요 → 단순 쿼리 후 클라이언트 정렬
                 const likedQuery = query(
                     collection(db, 'products'),
                     where('likedBy', 'array-contains', currentUser.uid),
-                    orderBy('createdAt', 'desc'),
-                    limit(50)
+                    limit(100)
                 );
                 
                 const snapshot = await getDocs(likedQuery);
@@ -728,7 +726,9 @@
                     return;
                 }
 
-                const favoriteProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const favoriteProducts = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
                 
                 container.innerHTML = '';
                 favoriteProducts.forEach(product => {
