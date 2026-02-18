@@ -358,6 +358,11 @@
         let map = null;
         let mapMarker = null;
         let selectedLocation = null;
+<<<<<<< HEAD
+=======
+        let isInitialized = false;   // 중복 초기화 방지
+        let isRedirecting = false;   // 리다이렉트 중 플래그
+>>>>>>> a964570cfdcb6b366c47968111b5d242b0c895f7
 
         // ========== URL에서 상품 ID 확인 (수정 모드) ==========
         const urlParams = new URLSearchParams(window.location.search);
@@ -397,12 +402,23 @@
 
         // ========== 인증 상태 확인 ==========
         onAuthStateChanged(auth, async (user) => {
+<<<<<<< HEAD
+=======
+            // 리다이렉트 중이거나 이미 초기화된 경우 무시
+            if (isRedirecting || isInitialized) return;
+            
+>>>>>>> a964570cfdcb6b366c47968111b5d242b0c895f7
             if (!user) {
+                isRedirecting = true;
                 alert("로그인이 필요한 서비스입니다.");
                 window.location.href = "login.html";
                 return;
             }
             
+<<<<<<< HEAD
+=======
+            isInitialized = true;
+>>>>>>> a964570cfdcb6b366c47968111b5d242b0c895f7
             currentUser = user;
             console.log('✅ 로그인된 사용자:', user.uid);
             
@@ -686,9 +702,15 @@
 
             const title = document.getElementById('title').value.trim();
             const description = document.getElementById('description').value.trim();
+<<<<<<< HEAD
             const location = document.getElementById('location').value.trim();
             
             if (!title || !description || !location) {
+=======
+            const locationText = document.getElementById('location').value.trim();
+            
+            if (!title || !description || !locationText) {
+>>>>>>> a964570cfdcb6b366c47968111b5d242b0c895f7
                 showToast("모든 필수 항목을 입력해주세요.", 'error');
                 return;
             }
@@ -702,27 +724,51 @@
                     category: document.querySelector('input[name="category"]:checked').value,
                     price: Number(document.getElementById('price').value) || 0,
                     description: description,
+<<<<<<< HEAD
                     location: location,
                     images: uploadedImages,
                     status: "판매중"
                 };
                 
+=======
+                    location: locationText,
+                    images: uploadedImages,
+                    status: isEditMode ? undefined : "판매중"
+                };
+                
+                // status가 undefined면 제거 (수정 시 기존 상태 유지)
+                if (productData.status === undefined) delete productData.status;
+                
+>>>>>>> a964570cfdcb6b366c47968111b5d242b0c895f7
                 // 거래 장소 추가 (선택사항)
                 if (selectedLocation) {
                     productData.tradeLocation = selectedLocation;
                 }
                 
                 if (isEditMode) {
+<<<<<<< HEAD
                     // 수정 모드
+=======
+                    // 수정 모드 - 기존 상태(status) 유지하면서 내용만 업데이트
+>>>>>>> a964570cfdcb6b366c47968111b5d242b0c895f7
                     productData.updatedAt = serverTimestamp();
                     
                     await updateDoc(doc(db, 'products', productId), productData);
                     
                     showToast("🌱 상품이 성공적으로 수정되었습니다!");
                     
+<<<<<<< HEAD
                     setTimeout(() => {
                         window.location.href = `product-detail.html?id=${productId}`;
                     }, 1000);
+=======
+                    // 리다이렉트 플래그 설정 (auth 재실행 차단)
+                    isRedirecting = true;
+                    submitBtn.innerHTML = '<i class="fas fa-check mr-2"></i>수정 완료!';
+                    setTimeout(() => {
+                        window.location.replace(`product-detail.html?id=${productId}`);
+                    }, 1200);
+>>>>>>> a964570cfdcb6b366c47968111b5d242b0c895f7
                     
                 } else {
                     // 등록 모드
@@ -738,9 +784,17 @@
                     
                     showToast("🌱 상품이 성공적으로 등록되었습니다!");
                     
+<<<<<<< HEAD
                     setTimeout(() => {
                         window.location.href = `product-detail.html?id=${docRef.id}`;
                     }, 1000);
+=======
+                    isRedirecting = true;
+                    submitBtn.innerHTML = '<i class="fas fa-check mr-2"></i>등록 완료!';
+                    setTimeout(() => {
+                        window.location.replace(`product-detail.html?id=${docRef.id}`);
+                    }, 1200);
+>>>>>>> a964570cfdcb6b366c47968111b5d242b0c895f7
                 }
                 
             } catch (err) {
