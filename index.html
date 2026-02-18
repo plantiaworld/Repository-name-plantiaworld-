@@ -338,7 +338,8 @@
             
             const viewCount = product.views || 0;
             const chatCount = product.chatCount || 0;
-            const likeCount = Array.isArray(product.likes) ? product.likes.length : (product.likes || 0);
+            const likeCount = typeof product.likeCount === 'number' ? product.likeCount : 
+                  (Array.isArray(product.likedBy) ? product.likedBy.length : 0);
             
             // 상태 뱃지
             let statusBadge = '';
