@@ -334,12 +334,7 @@
             deleteDoc,
             serverTimestamp 
         } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-        import { 
-            getAuth, 
-            onAuthStateChanged,
-            setPersistence,
-            browserLocalPersistence
-        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAW_z3hoI9SZ1-hoxKVYBKs7rbdo8n6wdc",
@@ -355,9 +350,6 @@
         const db = getFirestore(app);
         const auth = getAuth(app);
 
-        // ========== 자동 로그아웃 방지 - 로그인 상태 유지 ==========
-        await setPersistence(auth, browserLocalPersistence);
-
         // ========== 전역 변수 ==========
         let currentUser = null;
         let uploadedImages = [];
@@ -366,8 +358,6 @@
         let map = null;
         let mapMarker = null;
         let selectedLocation = null;
-        let isInitialized = false;
-        let isRedirecting = false;
 
         // ========== URL에서 상품 ID 확인 (수정 모드) ==========
         const urlParams = new URLSearchParams(window.location.search);
@@ -407,22 +397,12 @@
 
         // ========== 인증 상태 확인 ==========
         onAuthStateChanged(auth, async (user) => {
-            // 리다이렉트 중이거나 이미 초기화된 경우 무시
-            if (isRedirecting || isInitialized) return;
-            
             if (!user) {
-                // 로그인 체크를 약간 지연시켜 Firebase 인증 초기화 대기
-                setTimeout(() => {
-                    if (!auth.currentUser && !isRedirecting) {
-                        isRedirecting = true;
-                        alert("로그인이 필요한 서비스입니다.");
-                        window.location.href = "login.html";
-                    }
-                }, 1000);
+                alert("로그인이 필요한 서비스입니다.");
+                window.location.href = "login.html";
                 return;
             }
             
-            isInitialized = true;
             currentUser = user;
             console.log('✅ 로그인된 사용자:', user.uid);
             
@@ -441,7 +421,6 @@
                 const productSnap = await getDoc(productRef);
                 
                 if (!productSnap.exists()) {
-                    hideLoading();
                     alert('상품을 찾을 수 없습니다.');
                     window.location.href = 'index.html';
                     return;
@@ -449,9 +428,8 @@
                 
                 const product = productSnap.data();
                 
-                // ✅ 버그 수정: 권한 확인 (본인 상품만 수정 가능)
+                // 권한 확인 (본인 상품만 수정 가능)
                 if (product.sellerId !== currentUser.uid) {
-                    hideLoading();
                     alert('본인의 상품만 수정할 수 있습니다.');
                     window.location.href = 'index.html';
                     return;
@@ -494,6 +472,7 @@
                     document.getElementById('selectedAddress').textContent = 
                         product.tradeLocation.address || '선택된 위치';
                     
+                    // 지도 표시
                     setTimeout(() => {
                         initMap(product.tradeLocation.lat, product.tradeLocation.lng);
                     }, 100);
@@ -505,16 +484,9 @@
                 hideLoading();
             } catch (error) {
                 console.error('❌ 데이터 로드 오류:', error);
+                alert('데이터를 불러오는데 실패했습니다.');
                 hideLoading();
-                // ✅ 버그 수정: catch에서 무조건 index.html로 이동하던 것 제거
-                // permission-denied 오류인 경우 별도 안내
-                if (error.code === 'permission-denied') {
-                    alert('데이터 접근 권한이 없습니다. 다시 로그인해주세요.');
-                    window.location.href = 'login.html';
-                } else {
-                    alert('데이터를 불러오는데 실패했습니다.');
-                    window.location.href = 'index.html';
-                }
+                window.location.href = 'index.html';
             }
         }
 
@@ -528,6 +500,7 @@
             }
 
             files.forEach(file => {
+                // 파일 크기 체크 (5MB 제한)
                 if (file.size > 5 * 1024 * 1024) {
                     showToast(`${file.name}은(는) 5MB를 초과합니다.`, 'error');
                     return;
@@ -540,8 +513,9 @@
                         const canvas = document.createElement('canvas');
                         let width = img.width;
                         let height = img.height;
-                        const max_size = 800;
+                        const max_size = 800; // 고품질 유지
 
+                        // 비율 유지하며 리사이즈
                         if (width > height) {
                             if (width > max_size) {
                                 height *= max_size / width;
@@ -559,6 +533,7 @@
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, width, height);
                         
+                        // 품질 0.8로 압축
                         const compressedData = canvas.toDataURL('image/jpeg', 0.8);
                         uploadedImages.push(compressedData);
                         updatePreview();
@@ -570,6 +545,7 @@
                 reader.readAsDataURL(file);
             });
             
+            // input 초기화 (같은 파일 다시 선택 가능)
             input.value = '';
         };
 
@@ -626,6 +602,7 @@
                 mapContainer.classList.remove('hidden');
                 
                 if (!map) {
+                    // 기본 위치: 부산
                     initMap(35.1796, 129.0756);
                 }
             } else {
@@ -652,12 +629,14 @@
             
             mapMarker = L.marker([lat, lng], { draggable: true }).addTo(map);
             
+            // 지도 클릭 시 마커 이동
             map.on('click', function(e) {
                 const { lat, lng } = e.latlng;
                 mapMarker.setLatLng([lat, lng]);
                 updateSelectedLocation(lat, lng);
             });
             
+            // 마커 드래그 시
             mapMarker.on('dragend', function(e) {
                 const { lat, lng } = e.target.getLatLng();
                 updateSelectedLocation(lat, lng);
@@ -671,6 +650,7 @@
         async function updateSelectedLocation(lat, lng) {
             selectedLocation = { lat, lng };
             
+            // Nominatim API로 주소 변환
             try {
                 const response = await fetch(
                     `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
@@ -695,15 +675,10 @@
         document.getElementById('productForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            if (!currentUser) {
-                showToast('로그인이 필요합니다.', 'error');
-                window.location.href = 'login.html';
-                return;
-            }
-
             const submitBtn = document.getElementById('submitBtn');
             const originalText = submitBtn.innerHTML;
 
+            // 유효성 검사
             if (uploadedImages.length === 0) {
                 showToast("사진을 한 장 이상 올려주세요.", 'error');
                 return;
@@ -729,35 +704,33 @@
                     description: description,
                     location: locationText,
                     images: uploadedImages,
+                    // 수정 모드일 때는 기존 status 유지, 신규 등록만 "판매중"으로 설정
+                    ...(isEditMode ? {} : { status: "판매중" })
                 };
                 
+                // 거래 장소 추가 (선택사항)
                 if (selectedLocation) {
                     productData.tradeLocation = selectedLocation;
                 }
                 
                 if (isEditMode) {
-                    // ✅ 수정 모드 - status 건드리지 않고 내용만 업데이트
+                    // 수정 모드
                     productData.updatedAt = serverTimestamp();
                     
                     await updateDoc(doc(db, 'products', productId), productData);
                     
                     showToast("🌱 상품이 성공적으로 수정되었습니다!");
                     
-                    isRedirecting = true;
-                    submitBtn.innerHTML = '<i class="fas fa-check mr-2"></i>수정 완료!';
                     setTimeout(() => {
-                        window.location.replace(`product-detail.html?id=${productId}`);
-                    }, 1200);
+                        window.location.href = `product-detail.html?id=${productId}`;
+                    }, 1000);
                     
                 } else {
-                    // ✅ 등록 모드 - viewCount 필드 추가
+                    // 등록 모드
                     productData.sellerId = currentUser.uid;
                     productData.sellerName = currentUser.displayName || currentUser.email.split('@')[0];
-                    productData.sellerLocation = locationText;
                     productData.createdAt = serverTimestamp();
-                    productData.status = "판매중";
                     productData.views = 0;
-                    productData.viewCount = 0;   // ✅ 추가 - viewCount 필드 누락 수정
                     productData.likeCount = 0;
                     productData.chatCount = 0;
                     productData.likedBy = [];
@@ -766,20 +739,14 @@
                     
                     showToast("🌱 상품이 성공적으로 등록되었습니다!");
                     
-                    isRedirecting = true;
-                    submitBtn.innerHTML = '<i class="fas fa-check mr-2"></i>등록 완료!';
                     setTimeout(() => {
-                        window.location.replace(`product-detail.html?id=${docRef.id}`);
-                    }, 1200);
+                        window.location.href = `product-detail.html?id=${docRef.id}`;
+                    }, 1000);
                 }
                 
             } catch (err) {
                 console.error(`❌ ${isEditMode ? '수정' : '등록'} 오류:`, err);
-                if (err.code === 'permission-denied') {
-                    showToast('권한이 없습니다. 다시 로그인해주세요.', 'error');
-                } else {
-                    showToast(`${isEditMode ? '수정' : '등록'}에 실패했습니다. 다시 시도해 주세요.`, 'error');
-                }
+                showToast(`${isEditMode ? '수정' : '등록'}에 실패했습니다. 다시 시도해 주세요.`, 'error');
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = originalText;
             }
@@ -796,7 +763,7 @@
                 await deleteDoc(doc(db, 'products', productId));
                 
                 showToast('상품이 삭제되었습니다');
-                isRedirecting = true;
+                
                 setTimeout(() => {
                     window.location.href = 'index.html';
                 }, 1000);

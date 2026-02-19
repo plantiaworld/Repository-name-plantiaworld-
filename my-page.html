@@ -314,6 +314,9 @@
         let currentUser = null;
         let userProfile = null;
 
+        // 탭별 로드 완료 여부 추적 (불필요한 중복 Firestore 읽기 방지)
+        const tabLoaded = { plants: false, likes: false };
+
         window.firebaseModules = { db, auth, storage };
 
         // ========== 유틸리티 함수 ==========
@@ -322,6 +325,28 @@
             const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
             return String(text).replace(/[&<>"']/g, m => map[m]);
         }
+
+        // 기본 아바타 SVG (외부 placeholder URL 사용 안 함 - ERR_NAME_NOT_RESOLVED 방지)
+        const DEFAULT_AVATAR = `data:image/svg+xml,${encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">' +
+            '<rect width="120" height="120" fill="#e5e7eb"/>' +
+            '<circle cx="60" cy="45" r="22" fill="#10b981"/>' +
+            '<ellipse cx="60" cy="90" rx="35" ry="25" fill="#10b981"/>' +
+            '</svg>'
+        )}`;
+        const DEFAULT_AVATAR_SMALL = `data:image/svg+xml,${encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">' +
+            '<circle cx="16" cy="16" r="16" fill="#10b981"/>' +
+            '<circle cx="16" cy="12" r="6" fill="white"/>' +
+            '<ellipse cx="16" cy="28" rx="9" ry="6" fill="white"/>' +
+            '</svg>'
+        )}`;
+        const DEFAULT_PLANT_IMG = 'data:image/svg+xml,' + encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">' +
+            '<rect width="200" height="200" fill="#e8f5e9"/>' +
+            '<text x="50%" y="50%" font-size="60" text-anchor="middle" dy=".3em">🌿</text>' +
+            '</svg>'
+        );
 
         function showToast(message, type = 'success') {
             const existingToast = document.querySelector('.toast');
@@ -334,20 +359,37 @@
                 ${escapeHtml(message)}
             `;
             document.body.appendChild(toast);
-            
             setTimeout(() => toast.remove(), 3000);
+        }
+
+        // location 필드(문자열 또는 객체)를 표시용 문자열로 변환
+        function formatLocation(loc) {
+            if (!loc) return '미설정';
+            if (typeof loc === 'string') return loc || '미설정';
+            if (loc.address) return loc.address;
+            if (loc.latitude || loc.lat) {
+                const lat = (loc.latitude || loc.lat).toFixed(4);
+                const lng = (loc.longitude || loc.lng).toFixed(4);
+                return `위도 ${lat}, 경도 ${lng}`;
+            }
+            return '미설정';
+        }
+
+        // location 필드를 input용 문자열로 변환 (editLocation에 넣을 때)
+        function locationToString(loc) {
+            if (!loc) return '';
+            if (typeof loc === 'string') return loc;
+            if (loc.address) return loc.address;
+            return '';
         }
 
         // ========== 인증 상태 확인 ==========
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 currentUser = user;
-                console.log('로그인된 사용자:', user.uid);
-                console.log('사용자 이메일:', user.email);
                 await loadUserProfile(user);
                 document.getElementById('loadingScreen').classList.add('hidden');
             } else {
-                console.log('비로그인 상태 - 로그인 페이지로 이동');
                 window.location.href = 'login.html';
             }
         });
@@ -355,17 +397,15 @@
         // ========== 사용자 프로필 로드 ==========
         async function loadUserProfile(user) {
             try {
-                console.log('프로필 로드 시작:', user.uid);
                 const userDocRef = doc(db, 'users', user.uid);
                 const userSnap = await getDoc(userDocRef);
                 
                 if (userSnap.exists()) {
                     userProfile = userSnap.data();
-                    console.log('사용자 프로필:', userProfile);
                 } else {
-                    console.log('사용자 문서 없음 - 새로 생성');
-                    // 사용자 문서가 없으면 기본 정보로 생성
-                    await setDoc(userDocRef, {
+                    // 사용자 문서 없음 → 기본값으로 생성
+                    // Firebase Rules: users/{uid} 에 본인만 write 가능해야 함
+                    const defaultProfile = {
                         uid: user.uid,
                         email: user.email,
                         displayName: user.displayName || user.email.split('@')[0],
@@ -379,27 +419,20 @@
                             darkMode: false,
                             language: 'ko'
                         }
-                    });
-                    
-                    // 다시 로드
+                    };
+                    await setDoc(userDocRef, defaultProfile);
                     const newSnap = await getDoc(userDocRef);
                     userProfile = newSnap.data();
                 }
                 
-                // UI 업데이트
                 updateProfileUI(user);
-                
-                // 통계 로드
-                await loadStatistics(user.uid);
-                
-                // 환경 설정 로드
                 loadSettings();
-                
-                // 내 식물 로드
-                await loadMyPlants(user.uid);
-                
-                // 좋아요 목록 로드
-                await loadLikedProducts(user.uid);
+
+                // 내 식물 탭은 초기 활성 탭이므로 바로 로드
+                // 통계도 내 식물 쿼리 결과를 재사용하여 Firestore 읽기 최소화
+                await loadMyPlantsAndStats(user.uid);
+
+                // 좋아요 탭은 사용자가 탭 클릭 시 lazy load (tabLoaded 플래그로 관리)
                 
             } catch (error) {
                 console.error('프로필 로드 오류:', error);
@@ -409,7 +442,6 @@
 
         // ========== UI 업데이트 ==========
         function updateProfileUI(user) {
-            // 기본 프로필 정보
             const displayName = userProfile?.displayName || userProfile?.username || user.displayName || user.email.split('@')[0];
             document.getElementById('userName').textContent = displayName;
             document.getElementById('userEmail').textContent = user.email;
@@ -418,18 +450,22 @@
             
             // 가입일
             let joinDate;
-            if (userProfile?.createdAt && userProfile.createdAt.seconds) {
+            if (userProfile?.createdAt?.seconds) {
                 joinDate = new Date(userProfile.createdAt.seconds * 1000).toLocaleDateString('ko-KR');
             } else {
                 joinDate = new Date(user.metadata.creationTime).toLocaleDateString('ko-KR');
             }
             document.getElementById('joinDate').textContent = joinDate;
             
-            // 프로필 이미지
-            const defaultAvatar = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120"><rect width="120" height="120" fill="#e5e7eb"/><circle cx="60" cy="45" r="22" fill="#10b981"/><ellipse cx="60" cy="90" rx="35" ry="25" fill="#10b981"/></svg>')}`;
-            const profileImageUrl = user.photoURL || userProfile?.photoURL || userProfile?.profileImage || defaultAvatar;
-            document.getElementById('profileImage').src = profileImageUrl;
-            document.getElementById('headerProfileImage').src = profileImageUrl;
+            // 프로필 이미지 (외부 placeholder URL 없이 인라인 SVG 기본값 사용)
+            const profileImageUrl = userProfile?.photoURL || userProfile?.profileImage || user.photoURL || DEFAULT_AVATAR;
+            const profileImg = document.getElementById('profileImage');
+            const headerImg = document.getElementById('headerProfileImage');
+            profileImg.src = profileImageUrl;
+            headerImg.src = profileImageUrl;
+            // 로드 실패 시 기본 아바타로 대체
+            profileImg.onerror = () => { profileImg.src = DEFAULT_AVATAR; profileImg.onerror = null; };
+            headerImg.onerror = () => { headerImg.src = DEFAULT_AVATAR_SMALL; headerImg.onerror = null; };
             
             // 구독 정보
             const subscription = userProfile?.subscription || 'Free';
@@ -438,99 +474,45 @@
             document.getElementById('planBadge').className = 
                 subscription === 'Pro' ? 'badge-level badge-expert' : 'badge-level badge-beginner';
             
-            // 위치 정보 - 문자열 또는 객체 모두 처리
-            let locationText = '미설정';
-            const loc = userProfile?.location;
-            if (loc) {
-                if (typeof loc === 'string') locationText = loc;
-                else if (loc.address) locationText = loc.address;
-                else if (typeof loc === 'object' && (loc.latitude || loc.lat)) {
-                    locationText = `위도 ${(loc.latitude || loc.lat).toFixed(4)}, 경도 ${(loc.longitude || loc.lng).toFixed(4)}`;
-                }
-            }
-            document.getElementById('userLocation').textContent = locationText;
+            // 위치 정보
+            document.getElementById('userLocation').textContent = formatLocation(userProfile?.location);
         }
 
-        // ========== 통계 로드 ==========
-        async function loadStatistics(uid) {
+        // ========== 내 식물 + 통계 통합 로드 (Firestore 읽기 중복 제거) ==========
+        async function loadMyPlantsAndStats(uid) {
             try {
-                console.log('통계 로드 시작:', uid);
-                
-                // 등록한 식물 수
-                const myPlantsQuery = query(collection(db, 'products'), where('sellerId', '==', uid));
-                const myPlantsSnap = await getDocs(myPlantsQuery);
-                const myPlantsCount = myPlantsSnap.size;
-                document.getElementById('statMyPlants').textContent = myPlantsCount;
-                console.log('등록한 식물:', myPlantsCount);
-                
-                // 판매 완료 수
-                const soldQuery = query(
-                    collection(db, 'products'), 
-                    where('sellerId', '==', uid),
-                    where('status', '==', '판매완료')
-                );
-                const soldSnap = await getDocs(soldQuery);
-                const soldCount = soldSnap.size;
-                document.getElementById('statSold').textContent = soldCount;
-                console.log('판매 완료:', soldCount);
-                
-                // 좋아요 받은 수
-                let totalLikes = 0;
-                myPlantsSnap.forEach(doc => {
-                    const data = doc.data();
-                    totalLikes += (data.likeCount || 0);
-                });
-                document.getElementById('statLikes').textContent = totalLikes;
-                console.log('받은 좋아요:', totalLikes);
-                
-                // 리뷰 수 (임시)
-                document.getElementById('statReviews').textContent = '0';
-                
-            } catch (error) {
-                console.error('통계 로드 오류:', error);
-                // 오류 시 0으로 표시
-                document.getElementById('statMyPlants').textContent = '0';
-                document.getElementById('statSold').textContent = '0';
-                document.getElementById('statLikes').textContent = '0';
-                document.getElementById('statReviews').textContent = '0';
-            }
-        }
-
-        // ========== 환경 설정 로드 ==========
-        function loadSettings() {
-            const settings = userProfile?.settings || {
-                notifications: true,
-                emailAlerts: false,
-                darkMode: false,
-                language: 'ko'
-            };
-            
-            console.log('환경 설정 로드:', settings);
-            
-            document.getElementById('settingNotifications').checked = settings.notifications !== false;
-            document.getElementById('settingEmailAlerts').checked = settings.emailAlerts === true;
-            document.getElementById('settingDarkMode').checked = settings.darkMode === true;
-            document.getElementById('settingLanguage').value = settings.language || 'ko';
-        }
-
-        // ========== 내 식물 로드 ==========
-        async function loadMyPlants(uid) {
-            try {
-                console.log('내 식물 로드 시작:', uid);
                 const container = document.getElementById('myPlantsList');
                 container.innerHTML = '<div class="col-span-full"><div class="loading-spinner"></div></div>';
-                
-                const q = query(
+
+                // 내 식물 전체 쿼리 (통계와 목록 동시 처리)
+                // Firebase Rules: products 컬렉션은 인증된 사용자가 자신의 sellerId 문서만 read 가능해야 함
+                const myPlantsQuery = query(
                     collection(db, 'products'),
                     where('sellerId', '==', uid),
                     orderBy('createdAt', 'desc'),
                     limit(50)
                 );
-                
-                const snapshot = await getDocs(q);
-                console.log('내 식물 개수:', snapshot.size);
-                
-                if (snapshot.empty) {
+                const myPlantsSnap = await getDocs(myPlantsQuery);
+
+                // 통계 계산
+                let soldCount = 0;
+                let totalLikes = 0;
+                const products = [];
+
+                myPlantsSnap.forEach(docSnap => {
+                    const data = docSnap.data();
+                    products.push({ id: docSnap.id, ...data });
+                    if (data.status === '판매완료') soldCount++;
+                    totalLikes += (data.likeCount || 0);
+                });
+
+                document.getElementById('statMyPlants').textContent = myPlantsSnap.size;
+                document.getElementById('statSold').textContent = soldCount;
+                document.getElementById('statLikes').textContent = totalLikes;
+                document.getElementById('statReviews').textContent = '0';
+
+                // 내 식물 카드 렌더링
+                if (products.length === 0) {
                     container.innerHTML = `
                         <div class="col-span-full text-center py-12">
                             <i class="fas fa-seedling text-6xl text-gray-300 mb-4"></i>
@@ -540,18 +522,14 @@
                             </a>
                         </div>
                     `;
-                    return;
+                } else {
+                    container.innerHTML = products.map(product => createProductCard(product)).join('');
                 }
-                
-                const products = [];
-                snapshot.forEach(doc => {
-                    products.push({ id: doc.id, ...doc.data() });
-                });
-                
-                container.innerHTML = products.map(product => createProductCard(product)).join('');
-                
+
+                tabLoaded.plants = true;
+
             } catch (error) {
-                console.error('내 식물 로드 오류:', error);
+                console.error('내 식물/통계 로드 오류:', error);
                 document.getElementById('myPlantsList').innerHTML = `
                     <div class="col-span-full text-center py-12 text-red-500">
                         <i class="fas fa-exclamation-triangle text-6xl mb-4"></i>
@@ -559,17 +537,21 @@
                         <p class="text-sm mt-2">${escapeHtml(error.message)}</p>
                     </div>
                 `;
+                // 통계도 0으로 초기화
+                ['statMyPlants','statSold','statLikes','statReviews'].forEach(id => {
+                    document.getElementById(id).textContent = '0';
+                });
             }
         }
 
-        // ========== 좋아요한 식물 로드 ==========
+        // ========== 좋아요한 식물 로드 (lazy) ==========
         async function loadLikedProducts(uid) {
             try {
-                console.log('좋아요 목록 로드 시작:', uid);
                 const container = document.getElementById('likedProductsList');
                 container.innerHTML = '<div class="col-span-full"><div class="loading-spinner"></div></div>';
                 
-                // array-contains + orderBy 복합 인덱스 불필요하게 클라이언트 정렬
+                // Firebase Rules: products의 likedBy 배열에 uid가 포함된 문서 read
+                // → Rules에서 인증된 사용자(request.auth != null)만 허용해야 함
                 const q = query(
                     collection(db, 'products'),
                     where('likedBy', 'array-contains', uid),
@@ -577,7 +559,6 @@
                 );
                 
                 const snapshot = await getDocs(q);
-                console.log('좋아요 식물 개수:', snapshot.size);
                 
                 if (snapshot.empty) {
                     container.innerHTML = `
@@ -589,22 +570,20 @@
                             </a>
                         </div>
                     `;
+                    tabLoaded.likes = true;
                     return;
                 }
                 
                 const products = [];
-                snapshot.forEach(doc => {
-                    products.push({ id: doc.id, ...doc.data() });
+                snapshot.forEach(docSnap => {
+                    products.push({ id: docSnap.id, ...docSnap.data() });
                 });
                 
-                // 최신순 정렬 (클라이언트)
-                products.sort((a, b) => {
-                    const aTime = a.createdAt?.seconds || 0;
-                    const bTime = b.createdAt?.seconds || 0;
-                    return bTime - aTime;
-                });
+                // 최신순 정렬 (클라이언트 사이드)
+                products.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
                 
                 container.innerHTML = products.map(product => createProductCard(product)).join('');
+                tabLoaded.likes = true;
                 
             } catch (error) {
                 console.error('좋아요 목록 로드 오류:', error);
@@ -621,24 +600,26 @@
         // ========== 상품 카드 생성 ==========
         function createProductCard(product) {
             const price = product.price === 0 ? '나눔 🌱' : `${(product.price || 0).toLocaleString()}원`;
-                const image = product.images && product.images[0] ? product.images[0] : 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23e8f5e9%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2260%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%F0%9F%8C%BF%3C%2Ftext%3E%3C%2Fsvg%3E';
+            const image = (product.images && product.images[0]) ? product.images[0] : DEFAULT_PLANT_IMG;
             const status = product.status || '판매중';
             const statusClass = status === '판매중' ? 'bg-blue-500' : status === '예약중' ? 'bg-orange-500' : 'bg-red-500';
+            const locationStr = escapeHtml(product.sellerLocation || formatLocation(product.location) || '위치 미상');
             
             return `
-                <div class="product-card" onclick="window.location.href='product-detail.html?id=${product.id}'">
+                <div class="product-card" onclick="window.location.href='product-detail.html?id=${escapeHtml(product.id)}'">
                     <div class="relative">
-                <img src="${escapeHtml(image)}" alt="${escapeHtml(product.title || '상품')}" onerror="this.src='data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23e8f5e9%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2260%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%F0%9F%8C%BF%3C%2Ftext%3E%3C%2Fsvg%3E'" class="product-card-img w-full h-40 object-cover">
+                        <img src="${escapeHtml(image)}" 
+                             alt="${escapeHtml(product.title || '상품')}" 
+                             onerror="this.src='${DEFAULT_PLANT_IMG}';this.onerror=null;"
+                             class="w-full h-40 object-cover">
                         <div class="absolute top-2 left-2">
-                            <span class="${statusClass} text-white text-xs px-3 py-1 rounded-full font-semibold">
-                                ${status}
-                            </span>
+                            <span class="${statusClass} text-white text-xs px-3 py-1 rounded-full font-semibold">${escapeHtml(status)}</span>
                         </div>
                     </div>
                     <div class="p-4">
                         <h4 class="font-bold text-sm mb-1 truncate">${escapeHtml(product.title || '제목 없음')}</h4>
                         <p class="text-green-600 font-bold text-sm mb-2">${price}</p>
-                        <p class="text-xs text-gray-500 mb-2">${escapeHtml(product.sellerLocation || product.location || '위치 미상')}</p>
+                        <p class="text-xs text-gray-500 mb-2">${locationStr}</p>
                         <div class="flex items-center gap-3 text-xs text-gray-400">
                             <span><i class="far fa-heart"></i> ${product.likeCount || 0}</span>
                             <span><i class="far fa-comment"></i> ${product.chatCount || 0}</span>
@@ -649,26 +630,21 @@
             `;
         }
 
-        // ========== 탭 전환 ==========
+        // ========== 탭 전환 (lazy load 적용) ==========
         window.switchTab = function(tabName) {
-            console.log('탭 전환:', tabName);
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             
-            // 모든 탭 버튼 비활성화
-            document.querySelectorAll('.tab-button').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            
-            // 모든 탭 콘텐츠 숨김
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            
-            // 선택된 탭 활성화
             const tabButton = document.querySelector(`[onclick="switchTab('${tabName}')"]`);
             if (tabButton) tabButton.classList.add('active');
             
             const tabContent = document.getElementById(`content-${tabName}`);
             if (tabContent) tabContent.classList.add('active');
+
+            // 좋아요 탭: 처음 클릭할 때만 로드
+            if (tabName === 'likes' && !tabLoaded.likes && currentUser) {
+                loadLikedProducts(currentUser.uid);
+            }
         };
 
         // ========== 프로필 이미지 업로드 ==========
@@ -676,15 +652,10 @@
             const file = event.target.files[0];
             if (!file) return;
             
-            console.log('프로필 이미지 업로드 시작:', file.name);
-            
-            // 파일 크기 체크 (5MB)
             if (file.size > 5 * 1024 * 1024) {
                 showToast('파일 크기는 5MB 이하여야 합니다', 'error');
                 return;
             }
-            
-            // 이미지 파일 체크
             if (!file.type.startsWith('image/')) {
                 showToast('이미지 파일만 업로드 가능합니다', 'error');
                 return;
@@ -693,28 +664,28 @@
             try {
                 showToast('이미지 업로드 중...', 'success');
                 
-                // Firebase Storage에 업로드
+                // Firebase Storage Rules: profile-images/{uid}/ 경로는 본인만 write 가능해야 함
                 const storageRef = ref(storage, `profile-images/${currentUser.uid}/${Date.now()}_${file.name}`);
-                const snapshot = await uploadBytes(storageRef, file);
-                const downloadURL = await getDownloadURL(snapshot.ref);
+                const uploadSnapshot = await uploadBytes(storageRef, file);
+                const downloadURL = await getDownloadURL(uploadSnapshot.ref);
                 
-                console.log('업로드 완료:', downloadURL);
-                
-                // Firestore 업데이트
+                // Firestore 업데이트 (users/{uid}: 본인만 write 가능 - Rules 필수)
                 await updateDoc(doc(db, 'users', currentUser.uid), {
                     photoURL: downloadURL,
                     profileImage: downloadURL,
                     updatedAt: serverTimestamp()
                 });
                 
-                // Auth 프로필 업데이트
-                await updateProfile(currentUser, {
-                    photoURL: downloadURL
-                });
+                // Firebase Auth 프로필 업데이트
+                await updateProfile(currentUser, { photoURL: downloadURL });
                 
-                // UI 업데이트
+                // UI 즉시 반영
                 document.getElementById('profileImage').src = downloadURL;
                 document.getElementById('headerProfileImage').src = downloadURL;
+                if (userProfile) {
+                    userProfile.photoURL = downloadURL;
+                    userProfile.profileImage = downloadURL;
+                }
                 
                 showToast('프로필 이미지가 변경되었습니다', 'success');
                 
@@ -726,10 +697,10 @@
 
         // ========== 프로필 수정 모달 열기 ==========
         window.openEditProfile = function() {
-            console.log('프로필 수정 모달 열기');
             document.getElementById('editUsername').value = userProfile?.displayName || userProfile?.username || '';
             document.getElementById('editRealName').value = userProfile?.realName || userProfile?.displayName || '';
-            document.getElementById('editLocation').value = userProfile?.location || '';
+            // location이 객체일 때도 문자열로 안전하게 변환 ([object Object] 방지)
+            document.getElementById('editLocation').value = locationToString(userProfile?.location);
             document.getElementById('editProfileModal').classList.add('active');
         };
 
@@ -739,38 +710,57 @@
             const realName = document.getElementById('editRealName').value.trim();
             const location = document.getElementById('editLocation').value.trim();
             
-            console.log('프로필 저장:', { username, realName, location });
-            
             if (!username) {
                 showToast('닉네임을 입력해주세요', 'error');
                 return;
             }
             
             try {
+                // Firebase Rules: users/{uid} 는 request.auth.uid == uid 인 경우만 write 허용
                 await updateDoc(doc(db, 'users', currentUser.uid), {
                     displayName: username,
                     username: username,
                     realName: realName,
-                    location: location,
+                    location: location,   // 항상 string으로 저장하여 일관성 유지
                     updatedAt: serverTimestamp()
                 });
                 
-                // Auth 프로필도 업데이트
-                await updateProfile(currentUser, {
-                    displayName: username
-                });
+                await updateProfile(currentUser, { displayName: username });
+                
+                // 로컬 캐시 업데이트 (재요청 없이 UI 갱신)
+                if (userProfile) {
+                    userProfile.displayName = username;
+                    userProfile.username = username;
+                    userProfile.realName = realName;
+                    userProfile.location = location;
+                }
+                updateProfileUI(currentUser);
                 
                 showToast('프로필이 수정되었습니다', 'success');
                 closeModal('editProfileModal');
-                
-                // 프로필 다시 로드
-                await loadUserProfile(currentUser);
                 
             } catch (error) {
                 console.error('프로필 수정 오류:', error);
                 showToast('프로필 수정에 실패했습니다: ' + error.message, 'error');
             }
         };
+
+        // ========== 환경 설정 로드 ==========
+        function loadSettings() {
+            const settings = userProfile?.settings || {
+                notifications: true,
+                emailAlerts: false,
+                darkMode: false,
+                language: 'ko'
+            };
+            document.getElementById('settingNotifications').checked = settings.notifications !== false;
+            document.getElementById('settingEmailAlerts').checked = settings.emailAlerts === true;
+            document.getElementById('settingDarkMode').checked = settings.darkMode === true;
+            document.getElementById('settingLanguage').value = settings.language || 'ko';
+
+            // 저장된 다크모드 즉시 적용
+            if (settings.darkMode) document.body.classList.add('dark');
+        }
 
         // ========== 환경 설정 저장 ==========
         window.saveSettings = async function() {
@@ -782,16 +772,16 @@
                     language: document.getElementById('settingLanguage').value
                 };
                 
-                console.log('설정 저장:', settings);
-                
+                // Firebase Rules: users/{uid} 본인만 write 가능
                 await updateDoc(doc(db, 'users', currentUser.uid), {
                     settings: settings,
                     updatedAt: serverTimestamp()
                 });
+
+                if (userProfile) userProfile.settings = settings;
                 
                 showToast('설정이 저장되었습니다', 'success');
                 
-                // 다크모드 적용
                 if (settings.darkMode) {
                     document.body.classList.add('dark');
                 } else {
@@ -810,60 +800,48 @@
             const newPassword = document.getElementById('newPassword').value;
             const confirmPassword = document.getElementById('confirmPassword').value;
             
-            console.log('비밀번호 변경 시도');
-            
             if (!currentPassword || !newPassword || !confirmPassword) {
                 showToast('모든 항목을 입력해주세요', 'error');
                 return;
             }
-            
             if (newPassword !== confirmPassword) {
                 showToast('새 비밀번호가 일치하지 않습니다', 'error');
                 return;
             }
-            
             if (newPassword.length < 6) {
                 showToast('비밀번호는 6자 이상이어야 합니다', 'error');
                 return;
             }
             
             try {
-                // 재인증
                 const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
                 await reauthenticateWithCredential(currentUser, credential);
-                
-                // 비밀번호 변경
                 await updatePassword(currentUser, newPassword);
                 
                 showToast('비밀번호가 변경되었습니다', 'success');
                 closeModal('changePasswordModal');
                 
-                // 입력 필드 초기화
                 document.getElementById('currentPassword').value = '';
                 document.getElementById('newPassword').value = '';
                 document.getElementById('confirmPassword').value = '';
                 
             } catch (error) {
                 console.error('비밀번호 변경 오류:', error);
-                if (error.code === 'auth/wrong-password') {
-                    showToast('현재 비밀번호가 올바르지 않습니다', 'error');
-                } else if (error.code === 'auth/weak-password') {
-                    showToast('비밀번호가 너무 약합니다', 'error');
-                } else {
-                    showToast('비밀번호 변경에 실패했습니다: ' + error.message, 'error');
-                }
+                const msg = error.code === 'auth/wrong-password' ? '현재 비밀번호가 올바르지 않습니다'
+                          : error.code === 'auth/weak-password' ? '비밀번호가 너무 약합니다'
+                          : error.code === 'auth/invalid-credential' ? '현재 비밀번호가 올바르지 않습니다'
+                          : '비밀번호 변경에 실패했습니다: ' + error.message;
+                showToast(msg, 'error');
             }
         };
 
         // ========== 계정 삭제 ==========
         window.deleteAccount = async function() {
-            console.log('계정 삭제 시도');
-            
             if (!confirm('정말 탈퇴하시겠습니까?\n\n⚠️ 경고:\n- 모든 데이터가 영구적으로 삭제됩니다\n- 등록한 식물, 채팅 기록이 모두 삭제됩니다\n- 복구가 불가능합니다')) {
                 return;
             }
             
-            const password = prompt('비밀번호를 입력해주세요:');
+            const password = prompt('탈퇴를 확인하려면 비밀번호를 입력해주세요:');
             if (!password) {
                 showToast('비밀번호를 입력해야 합니다', 'error');
                 return;
@@ -872,39 +850,32 @@
             try {
                 showToast('계정 삭제 중...', 'success');
                 
-                // 재인증
+                // 재인증 먼저 (Firebase Rules 준수)
                 const credential = EmailAuthProvider.credential(currentUser.email, password);
                 await reauthenticateWithCredential(currentUser, credential);
                 
-                // 사용자 데이터 삭제
-                await deleteDoc(doc(db, 'users', currentUser.uid));
-                
-                // 사용자 상품 삭제
+                // 내 식물 삭제 (Firebase Rules: products/{id} sellerId == uid 인 경우만 delete 허용 필요)
                 const productsQuery = query(collection(db, 'products'), where('sellerId', '==', currentUser.uid));
                 const productsSnap = await getDocs(productsQuery);
-                const deletePromises = [];
-                productsSnap.forEach(productDoc => {
-                    deletePromises.push(deleteDoc(productDoc.ref));
-                });
-                await Promise.all(deletePromises);
+                await Promise.all(productsSnap.docs.map(productDoc => deleteDoc(productDoc.ref)));
                 
-                // 계정 삭제
+                // 사용자 문서 삭제 (Firebase Rules: users/{uid} 본인만 delete 가능)
+                await deleteDoc(doc(db, 'users', currentUser.uid));
+                
+                // Firebase Auth 계정 삭제
                 await deleteUser(currentUser);
                 
                 showToast('회원 탈퇴가 완료되었습니다', 'success');
-                setTimeout(() => {
-                    window.location.href = 'index.html';
-                }, 2000);
+                setTimeout(() => { window.location.href = 'index.html'; }, 2000);
                 
             } catch (error) {
                 console.error('계정 삭제 오류:', error);
-                if (error.code === 'auth/wrong-password') {
-                    showToast('비밀번호가 올바르지 않습니다', 'error');
-                } else if (error.code === 'auth/requires-recent-login') {
-                    showToast('보안을 위해 다시 로그인해주세요', 'error');
-                } else {
-                    showToast('회원 탈퇴에 실패했습니다: ' + error.message, 'error');
-                }
+                const msg = error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential'
+                    ? '비밀번호가 올바르지 않습니다'
+                    : error.code === 'auth/requires-recent-login'
+                    ? '보안을 위해 다시 로그인해주세요'
+                    : '회원 탈퇴에 실패했습니다: ' + error.message;
+                showToast(msg, 'error');
             }
         };
 
@@ -912,12 +883,9 @@
         window.handleLogout = async function() {
             if (confirm('로그아웃 하시겠습니까?')) {
                 try {
-                    console.log('로그아웃 시도');
                     await signOut(auth);
                     showToast('로그아웃되었습니다', 'success');
-                    setTimeout(() => {
-                        window.location.href = 'index.html';
-                    }, 1000);
+                    setTimeout(() => { window.location.href = 'index.html'; }, 1000);
                 } catch (error) {
                     console.error('로그아웃 오류:', error);
                     showToast('로그아웃에 실패했습니다: ' + error.message, 'error');
@@ -929,20 +897,16 @@
         window.closeModal = function(modalId) {
             document.getElementById(modalId).classList.remove('active');
         };
-
         window.openModal = function(modalId) {
             document.getElementById(modalId).classList.add('active');
         };
 
-        // 모달 외부 클릭시 닫기
+        // 모달 외부 클릭 시 닫기
         document.addEventListener('click', (e) => {
             if (e.target.classList.contains('modal')) {
                 e.target.classList.remove('active');
             }
         });
-
-        // ========== 페이지 로드 완료 ==========
-        console.log('마이페이지 스크립트 로드 완료');
 
     </script>
 </head>
@@ -965,9 +929,14 @@
                 <h1 class="text-xl font-bold text-gray-800">
                     <i class="fas fa-user-circle mr-2 text-green-600"></i>마이페이지
                 </h1>
-                <button onclick="handleLogout()" class="text-gray-600 hover:text-red-600 transition" title="로그아웃">
-                    <i class="fas fa-sign-out-alt text-xl"></i>
-                </button>
+                <div class="flex items-center gap-3">
+                    <img id="headerProfileImage" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2232%22%20height%3D%2232%22%20viewBox%3D%220%200%2032%2032%22%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2216%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2212%22%20r%3D%226%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2216%22%20cy%3D%2228%22%20rx%3D%229%22%20ry%3D%226%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E" 
+                         class="w-8 h-8 rounded-full object-cover border-2 border-green-500" alt="내 프로필"
+                         onerror="this.src='data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2232%22%20height%3D%2232%22%20viewBox%3D%220%200%2032%2032%22%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2216%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2212%22%20r%3D%226%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2216%22%20cy%3D%2228%22%20rx%3D%229%22%20ry%3D%226%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E'">
+                    <button onclick="handleLogout()" class="text-gray-600 hover:text-red-600 transition" title="로그아웃">
+                        <i class="fas fa-sign-out-alt text-xl"></i>
+                    </button>
+                </div>
             </div>
         </div>
     </header>

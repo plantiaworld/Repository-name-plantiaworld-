@@ -13,9 +13,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { 
             getAuth, 
-            onAuthStateChanged,
-            setPersistence,
-            browserLocalPersistence
+            onAuthStateChanged 
         } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -50,9 +48,6 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-
-        // ✅ 자동 로그아웃 방지 - 로그인 상태 영구 유지
-        await setPersistence(auth, browserLocalPersistence);
 
         // ========== 전역 변수 ==========
         let currentUser = null;
@@ -162,19 +157,15 @@
                         
                         console.log('✅ 상품 데이터:', currentProduct);
                         
-                        // ✅ 조회수 증가 (최초 한 번만) - views, viewCount 동시 업데이트
+                        // 조회수 증가 (최초 한 번만)
                         if (!hasIncrementedView && !sessionStorage.getItem(`viewed_${productId}`)) {
                             hasIncrementedView = true;
                             try {
-                                await updateDoc(productRef, { 
-                                    views: increment(1),
-                                    viewCount: increment(1)
-                                });
+                                await updateDoc(productRef, { views: increment(1) });
                                 sessionStorage.setItem(`viewed_${productId}`, 'true');
                                 console.log('👁️ 조회수 증가 완료');
                             } catch (error) {
-                                // 오류 발생해도 무시 (비로그인 사용자 등)
-                                console.warn('⚠️ 조회수 증가 실패 (무시됨):', error.message);
+                                console.error('❌ 조회수 증가 오류:', error);
                             }
                         }
                         
@@ -389,23 +380,7 @@
         }
 
         // ========== 판매자 정보 로드 ==========
-        const DEFAULT_AVATAR = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2040%2040%22%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2220%22%20r%3D%2220%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2215%22%20r%3D%227%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2220%22%20cy%3D%2234%22%20rx%3D%2211%22%20ry%3D%228%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E';
-        
         async function loadSellerInfo(sellerId) {
-            // 현재 상품에서 판매자 이름 미리 표시 (API 실패 대비)
-            const nameEl = document.getElementById('sellerName');
-            const avatarEl = document.getElementById('sellerAvatar');
-            
-            if (currentProduct && currentProduct.sellerName && nameEl) {
-                nameEl.textContent = currentProduct.sellerName;
-            }
-            if (avatarEl) {
-                avatarEl.src = DEFAULT_AVATAR;
-                avatarEl.onerror = function() { this.src = DEFAULT_AVATAR; };
-            }
-            
-            if (!sellerId) return;
-            
             try {
                 const sellerDoc = await getDoc(doc(db, 'users', sellerId));
                 
@@ -413,27 +388,26 @@
                     const seller = sellerDoc.data();
                     console.log('✅ 판매자 정보:', seller);
                     
+                    const avatarEl = document.getElementById('sellerAvatar');
+                    const nameEl = document.getElementById('sellerName');
                     const joinDateEl = document.getElementById('sellerJoinDate');
                     
-                    if (avatarEl && seller.photoURL) {
-                        avatarEl.src = seller.photoURL;
-                        avatarEl.onerror = function() { this.src = DEFAULT_AVATAR; };
+                    if (avatarEl) {
+                        avatarEl.src = seller.photoURL || "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%2224%22%20r%3D%2224%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%2218%22%20r%3D%229%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2224%22%20cy%3D%2242%22%20rx%3D%2214%22%20ry%3D%229%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E";
+                        avatarEl.onerror = function() {
+                            this.src = "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%2224%22%20r%3D%2224%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%2218%22%20r%3D%229%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2224%22%20cy%3D%2242%22%20rx%3D%2214%22%20ry%3D%229%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E";
+                        };
                     }
-                    if (nameEl) nameEl.textContent = seller.username || seller.displayName || currentProduct?.sellerName || '익명';
+                    if (nameEl) nameEl.textContent = seller.displayName || '익명';
                     if (joinDateEl) {
                         const joinDate = seller.createdAt ? new Date(seller.createdAt.seconds * 1000) : new Date();
                         joinDateEl.textContent = joinDate.toLocaleDateString('ko-KR');
                     }
                 } else {
-                    console.warn('⚠️ 판매자 정보 없음 - 상품 데이터 사용');
+                    console.warn('⚠️ 판매자 정보 없음');
                 }
             } catch (error) {
-                // permission-denied: Firebase 규칙으로 읽기 허용 필요
-                // 상품의 sellerName으로 대체 표시
-                console.warn('⚠️ 판매자 정보 로드 실패 (상품 데이터로 대체):', error.message);
-                if (nameEl && currentProduct?.sellerName) {
-                    nameEl.textContent = currentProduct.sellerName;
-                }
+                console.error('❌ 판매자 정보 로드 오류:', error);
             }
         }
 
@@ -461,8 +435,8 @@
                     const product = doc.data();
                     const firstImage = product.images && product.images[0] 
                         ? product.images[0] 
-                        ? product.images[0] 
                         : 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23e8f5e9%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2260%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%F0%9F%8C%BF%3C%2Ftext%3E%3C%2Fsvg%3E';
+                    
                     return `
                         <a href="product-detail.html?id=${doc.id}" class="group block">
                             <div class="glass-card rounded-xl overflow-hidden hover:shadow-lg transition">
@@ -524,8 +498,8 @@
                     const product = doc.data();
                     const firstImage = product.images && product.images[0] 
                         ? product.images[0] 
-                        ? product.images[0] 
                         : 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23e8f5e9%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2260%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%F0%9F%8C%BF%3C%2Ftext%3E%3C%2Fsvg%3E';
+                    
                     return `
                         <a href="product-detail.html?id=${doc.id}" class="group block">
                             <div class="glass-card rounded-xl overflow-hidden hover:shadow-lg transition">
@@ -596,16 +570,11 @@
             
             if (!currentProduct) return;
             
-            // ✅ 버튼 중복 클릭 방지
-            const likeBtn = document.getElementById('likeBtn');
-            if (likeBtn) likeBtn.disabled = true;
-            
             try {
                 const productRef = doc(db, 'products', productId);
                 const isLiked = currentProduct.likedBy && currentProduct.likedBy.includes(currentUser.uid);
                 
                 if (isLiked) {
-                    // ✅ likedBy와 likeCount 동시 업데이트 (규칙에 둘 다 허용됨)
                     await updateDoc(productRef, {
                         likedBy: arrayRemove(currentUser.uid),
                         likeCount: increment(-1)
@@ -620,14 +589,7 @@
                 }
             } catch (error) {
                 console.error('❌ 좋아요 오류:', error);
-                if (error.code === 'permission-denied') {
-                    showToast('권한이 없습니다. 다시 로그인해주세요.', 'error');
-                } else {
-                    showToast('오류가 발생했습니다', 'error');
-                }
-            } finally {
-                // ✅ 버튼 다시 활성화
-                if (likeBtn) likeBtn.disabled = false;
+                showToast('오류가 발생했습니다', 'error');
             }
         };
 
@@ -660,9 +622,9 @@
                 
                 if (!existingChats.empty) {
                     const chatId = existingChats.docs[0].id;
-                    window.location.href = `chat-room.html?id=${chatId}`;
+                    window.location.href = `chat.html?id=${chatId}`;
                 } else {
-                    // 새 채팅방 생성 - participants 배열 포함 (chat-room.html에서 필요)
+                    // 새 채팅방 생성
                     const newChat = await addDoc(collection(db, 'chats'), {
                         productId: productId,
                         productTitle: currentProduct.title,
@@ -670,23 +632,18 @@
                         productPrice: currentProduct.price,
                         sellerId: currentProduct.sellerId,
                         buyerId: currentUser.uid,
-                        participants: [currentUser.uid, currentProduct.sellerId],
                         createdAt: serverTimestamp(),
                         lastMessage: '',
                         lastMessageTime: serverTimestamp(),
                         unreadCount: { [currentProduct.sellerId]: 0, [currentUser.uid]: 0 }
                     });
                     
-                    // 상품의 채팅 수 증가 (별도 try-catch로 실패해도 채팅은 이동)
-                    try {
-                        await updateDoc(doc(db, 'products', productId), {
-                            chatCount: increment(1)
-                        });
-                    } catch (countErr) {
-                        console.warn('채팅 카운트 업데이트 실패 (무시됨):', countErr);
-                    }
+                    // 상품의 채팅 수 증가
+                    await updateDoc(doc(db, 'products', productId), {
+                        chatCount: increment(1)
+                    });
                     
-                    window.location.href = `chat-room.html?id=${newChat.id}`;
+                    window.location.href = `chat.html?id=${newChat.id}`;
                 }
             } catch (error) {
                 console.error('❌ 채팅 시작 오류:', error);
@@ -737,6 +694,11 @@
             if (!confirm('정말 이 상품을 삭제하시겠습니까?')) return;
             
             try {
+                // 삭제 전 onSnapshot 리스너 먼저 해제 (삭제된 문서 감지 오류 방지)
+                if (unsubscribeProduct) {
+                    unsubscribeProduct();
+                    unsubscribeProduct = null;
+                }
                 await deleteDoc(doc(db, 'products', productId));
                 alert('상품이 삭제되었습니다.');
                 window.location.href = 'index.html';
@@ -1116,7 +1078,7 @@
                     <div class="border-t pt-4">
                         <h3 class="font-bold text-gray-800 mb-3">판매자 정보</h3>
                         <div class="flex items-center gap-3">
-            <img id="sellerAvatar" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2040%2040%22%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2220%22%20r%3D%2220%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2215%22%20r%3D%227%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2220%22%20cy%3D%2234%22%20rx%3D%2211%22%20ry%3D%228%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E" class="w-16 h-16 rounded-full object-cover" alt="판매자 프로필">
+                            <img id="sellerAvatar" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%2224%22%20r%3D%2224%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%2218%22%20r%3D%229%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2224%22%20cy%3D%2242%22%20rx%3D%2214%22%20ry%3D%229%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E" alt="판매자" 
                                  class="w-12 h-12 rounded-full object-cover border-2 border-gray-200">
                             <div>
                                 <p id="sellerName" class="font-bold text-gray-900">로딩중...</p>

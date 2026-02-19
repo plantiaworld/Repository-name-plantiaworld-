@@ -48,7 +48,7 @@
     <header class="bg-white border-b border-gray-100 px-4 py-3 flex items-center sticky top-0 z-10">
         <button onclick="history.back()" class="mr-3 text-gray-500"><i class="fas fa-chevron-left text-xl"></i></button>
         <div class="flex items-center flex-1">
-            <img id="otherUserImg" src="" class="w-10 h-10 rounded-full border border-gray-100 bg-green-100">
+            <img id="otherUserImg" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2240%22%20height%3D%2240%22%20viewBox%3D%220%200%2040%2040%22%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2220%22%20r%3D%2220%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2215%22%20r%3D%228%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2220%22%20cy%3D%2235%22%20rx%3D%2212%22%20ry%3D%228%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E" class="w-10 h-10 rounded-full border border-gray-100">
             <div class="ml-3">
                 <h3 id="otherUserName" class="font-bold text-gray-800">로딩 중...</h3>
                 <p class="text-[10px] text-green-500 flex items-center"><span id="onlineStatus" class="w-2 h-2 bg-green-500 rounded-full mr-1"></span> <span id="statusText">응답 빠름</span></p>
@@ -67,7 +67,7 @@
 
     <div class="bg-white px-4 py-2 border-b border-gray-100 flex items-center justify-between">
         <div class="flex items-center">
-            <img id="productImg" src="" class="w-12 h-12 rounded-lg object-cover bg-green-50">
+            <img id="productImg" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23e8f5e9%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2260%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%F0%9F%8C%BF%3C%2Ftext%3E%3C%2Fsvg%3E" class="w-12 h-12 rounded-lg object-cover">
             <div class="ml-3">
                 <p id="productTitle" class="text-sm font-semibold text-gray-700">로딩 중...</p>
                 <p id="productPrice" class="text-xs font-bold text-gray-900">0원</p>
@@ -115,7 +115,7 @@
         // ============================================
         // Firebase v10 SDK Import
         // ============================================
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { 
             getFirestore, 
             collection, 
@@ -127,18 +127,20 @@
             doc,
             getDoc,
             deleteDoc,
-            updateDoc
-        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+            updateDoc,
+            increment,
+            enableIndexedDbPersistence 
+        } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
         import { 
             getAuth, 
             onAuthStateChanged 
-        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
         import { 
             getStorage, 
             ref, 
             uploadBytesResumable, 
             getDownloadURL 
-        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
+        } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-storage.js";
 
         // ============================================
         // Firebase 설정 및 초기화
@@ -157,6 +159,18 @@
         const db = getFirestore(app);
         const auth = getAuth(app);
         const storage = getStorage(app);
+
+        // 오프라인 지속성 활성화 (v10 방식)
+        try {
+            await enableIndexedDbPersistence(db);
+            console.log("오프라인 지원 활성화됨");
+        } catch (err) {
+            if (err.code === 'failed-precondition') {
+                console.log("여러 탭이 열려있어 오프라인 지원 불가");
+            } else if (err.code === 'unimplemented') {
+                console.log("브라우저가 오프라인 지원을 하지 않음");
+            }
+        }
 
         // ============================================
         // 전역 변수
@@ -231,18 +245,23 @@
                 chatData = chatSnap.data();
                 console.log('✅ 채팅방 정보 로드:', chatData);
                 
-                // participants 배열 또는 buyerId/sellerId로 참여자 확인
+                // participants 배열로 권한 체크 (없으면 buyerId/sellerId로 폴백)
                 const participants = chatData.participants || 
                     [chatData.buyerId, chatData.sellerId].filter(Boolean);
                 
-                if (!participants.includes(currentUser.uid)) {
+                const isParticipant = participants.includes(currentUser.uid) ||
+                    chatData.buyerId === currentUser.uid ||
+                    chatData.sellerId === currentUser.uid;
+                
+                if (!isParticipant) {
                     console.error('❌ 채팅 참여자가 아닙니다.');
                     alert('채팅 권한이 없습니다.');
                     window.location.href = 'index.html';
                     return;
                 }
                 
-                const otherUserId = participants.find(id => id !== currentUser.uid);
+                const otherUserId = participants.find(id => id !== currentUser.uid)
+                    || (chatData.buyerId === currentUser.uid ? chatData.sellerId : chatData.buyerId);
                 
                 if (otherUserId) {
                     await loadOtherUserInfo(otherUserId);
@@ -278,14 +297,12 @@
                     console.log('✅ 상대방 정보 로드:', otherUser);
                     
                     // UI 업데이트
-                    document.getElementById('otherUserName').textContent = otherUser.nickname || otherUser.email || '사용자';
-                    const avatarEl = document.getElementById('otherUserImg');
-                    avatarEl.src = otherUser.profileImage || otherUser.photoURL || '';
-                    if (!avatarEl.src) avatarEl.style.background = '#10b981';
+                    document.getElementById('otherUserName').textContent = otherUser.displayName || otherUser.username || otherUser.nickname || otherUser.email || '사용자';
+                    document.getElementById('otherUserImg').src = otherUser.profileImage || otherUser.photoURL || 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2240%22%20height%3D%2240%22%20viewBox%3D%220%200%2040%2040%22%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2220%22%20r%3D%2220%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2215%22%20r%3D%228%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2220%22%20cy%3D%2235%22%20rx%3D%2212%22%20ry%3D%228%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E';
                     
                     // 이미지 에러 처리
                     document.getElementById('otherUserImg').onerror = function() {
-                        this.src = ''; this.style.background = '#10b981';
+                        this.src = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2240%22%20height%3D%2240%22%20viewBox%3D%220%200%2040%2040%22%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2220%22%20r%3D%2220%22%20fill%3D%22%2310b981%22%2F%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2215%22%20r%3D%228%22%20fill%3D%22white%22%2F%3E%3Cellipse%20cx%3D%2220%22%20cy%3D%2235%22%20rx%3D%2212%22%20ry%3D%228%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E';
                     };
                     
                     // 온라인 상태 표시
@@ -342,7 +359,7 @@
                     
                     document.getElementById('productTitle').textContent = product.title || '상품';
                     document.getElementById('productPrice').textContent = price;
-                    document.getElementById('productImg').src = product.images?.[0] || '';
+                    document.getElementById('productImg').src = product.images?.[0] || 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23e8f5e9%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2260%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%F0%9F%8C%BF%3C%2Ftext%3E%3C%2Fsvg%3E';
                     
                     // 상품 클릭 시 상세 페이지로 이동
                     document.getElementById('productImg').onclick = () => {
@@ -451,13 +468,13 @@
                     <img src="${escapeHtml(data.imageUrl)}" 
                          class="image-message" 
                          onclick="showImageModal('${escapeHtml(data.imageUrl)}')"
-                onerror="this.src='data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23e8f5e9%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2260%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%F0%9F%8C%BF%3C%2Ftext%3E%3C%2Fsvg%3E'">
+                         onerror="this.src='data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23f3f4f6%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2240%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%E2%9D%8C%3C%2Ftext%3E%3C%2Fsvg%3E'"
                          loading="lazy">
                 `;
             }
             
             // 일반 메시지
-            const senderName = isMyMessage ? '나' : (otherUser?.nickname || otherUser?.email || '사용자');
+            const senderName = isMyMessage ? '나' : (otherUser?.displayName || otherUser?.username || otherUser?.nickname || otherUser?.email || '사용자');
             
             messageDiv.innerHTML = `
                 <div class="flex flex-col ${isMyMessage ? 'items-end' : 'items-start'} max-w-[75%]">
@@ -533,9 +550,9 @@
                     updatedAt: serverTimestamp()
                 };
                 
-                // 상대방의 읽지 않은 메시지 수 증가
+                // 상대방의 읽지 않은 메시지 수 증가 (increment로 동시성 문제 방지)
                 if (otherUser && otherUser.id) {
-                    updateData[`unreadCount.${otherUser.id}`] = (chatData.unreadCount?.[otherUser.id] || 0) + 1;
+                    updateData[`unreadCount.${otherUser.id}`] = increment(1);
                 }
                 
                 await updateDoc(chatDocRef, updateData);
