@@ -157,15 +157,15 @@
                         
                         console.log('✅ 상품 데이터:', currentProduct);
                         
-                        // 조회수 증가 (최초 한 번만)
-                        if (!hasIncrementedView && !sessionStorage.getItem(`viewed_${productId}`)) {
+                        // 조회수 증가 (최초 한 번만, 로그인 사용자만)
+                        if (currentUser && !hasIncrementedView && !sessionStorage.getItem(`viewed_${productId}`)) {
                             hasIncrementedView = true;
                             try {
                                 await updateDoc(productRef, { views: increment(1) });
                                 sessionStorage.setItem(`viewed_${productId}`, 'true');
                                 console.log('👁️ 조회수 증가 완료');
                             } catch (error) {
-                                console.error('❌ 조회수 증가 오류:', error);
+                                console.warn('⚠️ 조회수 증가 실패 (권한 부족):', error.code);
                             }
                         }
                         
@@ -419,7 +419,13 @@
                     console.warn('⚠️ 판매자 정보 없음');
                 }
             } catch (error) {
-                console.error('❌ 판매자 정보 로드 오류:', error);
+                if (error.code === 'permission-denied') {
+                    console.warn('⚠️ 판매자 정보 로드 권한 없음 (비로그인 상태)');
+                    const nameEl = document.getElementById('sellerName');
+                    if (nameEl) nameEl.textContent = '로그인 후 확인 가능';
+                } else {
+                    console.error('❌ 판매자 정보 로드 오류:', error);
+                }
             }
         }
 
@@ -1151,12 +1157,17 @@
     <div class="floating-bottom">
         <div class="container mx-auto max-w-4xl">
             <!-- 구매자 액션 -->
-            <div id="buyerActions" class="flex items-center gap-3">
-                <button id="likeBtn" onclick="toggleLike()" class="p-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition">
-                    <i id="likeIcon" class="far fa-heart text-gray-600 text-xl"></i>
-                </button>
-                <button id="actionBtn" onclick="handleChatClick()" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-bold transition">
-                    채팅하기
+            <div id="buyerActions" class="flex flex-col gap-2">
+                <div class="flex items-center gap-3">
+                    <button id="likeBtn" onclick="toggleLike()" class="p-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition">
+                        <i id="likeIcon" class="far fa-heart text-gray-600 text-xl"></i>
+                    </button>
+                    <button id="actionBtn" onclick="handleChatClick()" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-bold transition">
+                        채팅하기
+                    </button>
+                </div>
+                <button onclick="window.location.href='index.html'" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-medium transition">
+                    <i class="fas fa-home mr-2"></i>메인으로
                 </button>
             </div>
             
