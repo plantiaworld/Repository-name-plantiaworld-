@@ -715,20 +715,36 @@
         window.saveProfile = async function() {
             const username = document.getElementById('editUsername').value.trim();
             const realName = document.getElementById('editRealName').value.trim();
-            const location = document.getElementById('editLocation').value.trim();
+            const locationText = document.getElementById('editLocation').value.trim();
             
             if (!username) {
                 showToast('닉네임을 입력해주세요', 'error');
                 return;
             }
             
+            // ✅ FIX: location을 {latitude, longitude, address} 객체로 저장
+            //    → add-product.html이 loc.latitude 읽어 sellerLocation에 저장 가능
+            //    → index.html 거리 기반 필터링 정상 작동
+            //    검색된 좌표가 있으면 객체로, 없으면 기존 객체(있으면) 또는 string 유지
+            let locationToSave;
+            if (profileEditLatLng && profileEditLatLng.address === locationText) {
+                // 검색으로 찾은 좌표와 현재 입력이 일치 → 객체로 저장
+                locationToSave = profileEditLatLng;
+            } else if (userProfile?.location?.latitude) {
+                // 기존에 좌표 객체가 있고 주소 텍스트만 바꾼 경우 → 주소만 갱신
+                locationToSave = { ...userProfile.location, address: locationText };
+            } else {
+                // 좌표 없음 → 텍스트로 저장 (하위 호환)
+                locationToSave = locationText;
+            }
+
             try {
                 // Firebase Rules: users/{uid} 는 request.auth.uid == uid 인 경우만 write 허용
                 await updateDoc(doc(db, 'users', currentUser.uid), {
                     displayName: username,
                     username: username,
                     realName: realName,
-                    location: location,   // 항상 string으로 저장하여 일관성 유지
+                    location: locationToSave,
                     updatedAt: serverTimestamp()
                 });
                 
@@ -739,8 +755,10 @@
                     userProfile.displayName = username;
                     userProfile.username = username;
                     userProfile.realName = realName;
-                    userProfile.location = location;
+                    userProfile.location = locationToSave;
                 }
+                // 좌표 초기화 (다음 저장 때 혼동 방지)
+                profileEditLatLng = null;
                 updateProfileUI(currentUser);
                 
                 showToast('프로필이 수정되었습니다', 'success');
@@ -918,6 +936,8 @@
         // ========== ✅ BUG FIX #2: 주소 입력 → 지도 자동 이동 ==========
         let profileEditMap = null;
         let profileEditMarker = null;
+        // ✅ FIX: 검색된 좌표 보관 → saveProfile에서 {latitude, longitude, address} 객체로 저장
+        let profileEditLatLng = null;
 
         window.searchLocationOnMap = async function() {
             const address = document.getElementById('editLocation').value.trim();
@@ -975,6 +995,8 @@
                 }
 
                 showToast(`📍 "${address}" 위치를 찾았습니다`);
+                // ✅ FIX: 좌표 보관 → 저장 시 {latitude, longitude, address} 객체로 활용
+                profileEditLatLng = { latitude: lat, longitude: lng, address };
 
             } catch (error) {
                 console.error('주소 검색 오류:', error);

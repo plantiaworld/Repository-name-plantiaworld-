@@ -180,7 +180,6 @@
         let chatData = null;
         let selectedFile = null;
         let unsubscribeMessages = null;
-        let isInitialLoad = true; // 초기 로딩 플래그
 
         // URL 파라미터 추출 (product-detail.html에서 chat-room.html?id=chatId 형식으로 전달)
         const urlParams = new URLSearchParams(window.location.search);
@@ -379,47 +378,30 @@
         function listenToMessages() {
             const messagesRef = collection(db, 'chats', chatId, 'messages');
             const q = query(messagesRef, orderBy('timestamp', 'asc'));
-            
+
+            // ✅ BUG FIX #2: isInitialLoad + docChanges() 조합 제거
+            //    → 항상 전체 재렌더링 방식으로 변경
+            //    이유: serverTimestamp() 펜딩 상태에서 added/modified 이중 발화 타이밍 버그
+            //          실제 채팅 메시지는 많지 않으므로 전체 재렌더링이 더 안정적
             unsubscribeMessages = onSnapshot(q, (snapshot) => {
                 const chatContainer = document.getElementById('chatMessages');
-                
-                // 초기 로딩 시 전체 메시지 렌더링
-                if (isInitialLoad) {
-                    chatContainer.innerHTML = ''; // 기존 내용 제거
-                    
-                    snapshot.docs.forEach((doc) => {
-                        const messageData = doc.data();
-                        const messageElement = createMessageElement(doc.id, messageData);
-                        chatContainer.appendChild(messageElement);
-                    });
-                    
-                    isInitialLoad = false;
-                    scrollToBottom();
-                    console.log(`✅ 메시지 ${snapshot.docs.length}개 로드 완료`);
-                } else {
-                    // 실시간 변경사항만 처리
-                    snapshot.docChanges().forEach((change) => {
-                        if (change.type === 'added') {
-                            const messageData = change.doc.data();
-                            const messageElement = createMessageElement(change.doc.id, messageData);
-                            chatContainer.appendChild(messageElement);
-                            scrollToBottom();
-                        } else if (change.type === 'removed') {
-                            const messageElement = document.querySelector(`[data-message-id="${change.doc.id}"]`);
-                            if (messageElement) {
-                                messageElement.remove();
-                            }
-                        } else if (change.type === 'modified') {
-                            // 메시지 수정 처리 (선택 사항)
-                            const messageElement = document.querySelector(`[data-message-id="${change.doc.id}"]`);
-                            if (messageElement) {
-                                const messageData = change.doc.data();
-                                const newElement = createMessageElement(change.doc.id, messageData);
-                                messageElement.replaceWith(newElement);
-                            }
-                        }
-                    });
-                }
+
+                // 스크롤 위치 기억 (맨 아래 있었으면 재렌더 후에도 맨 아래 유지)
+                const wasAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop 
+                                    <= chatContainer.clientHeight + 80;
+
+                // 전체 재렌더링
+                chatContainer.innerHTML = '';
+                snapshot.docs.forEach((doc) => {
+                    const messageData = doc.data();
+                    const messageElement = createMessageElement(doc.id, messageData);
+                    chatContainer.appendChild(messageElement);
+                });
+
+                if (wasAtBottom) scrollToBottom();
+
+                console.log(`✅ 메시지 ${snapshot.docs.length}개 렌더링`);
+
             }, (error) => {
                 console.error('❌ 메시지 수신 실패:', error);
                 if (error.code === 'permission-denied') {
@@ -514,6 +496,10 @@
                 alert('로그인이 필요합니다.');
                 return;
             }
+
+            // ✅ BUG FIX #2: 전송 중 버튼 비활성화 (중복 전송 방지)
+            const sendBtn = document.getElementById('sendBtn');
+            if (sendBtn) { sendBtn.disabled = true; sendBtn.style.opacity = '0.5'; }
             
             try {
                 const messageData = {
@@ -561,9 +547,13 @@
                 messageInput.value = '';
                 messageInput.style.height = 'auto';
                 clearFilePreview();
+                // ✅ BUG FIX #2: 전송 완료 후 버튼 복구
+                if (sendBtn) { sendBtn.disabled = false; sendBtn.style.opacity = '1'; }
                 
             } catch (error) {
                 console.error('❌ 메시지 전송 실패:', error);
+                // ✅ BUG FIX #2: 실패 시에도 버튼 복구
+                if (sendBtn) { sendBtn.disabled = false; sendBtn.style.opacity = '1'; }
                 
                 if (error.code === 'permission-denied') {
                     alert('메시지 전송 권한이 없습니다.');
