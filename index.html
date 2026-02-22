@@ -22,7 +22,8 @@
             getDocs,
             doc,
             getDoc,
-            updateDoc
+            updateDoc,
+            onSnapshot   /* ✅ BUG FIX #4: 채팅 알림 실시간 구독용 */
         } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -91,6 +92,19 @@
         }
 
         // ========== 디바운싱 함수 ==========
+        // ========== ✅ 연동 FIX: 거리 계산 (Haversine 공식) ==========
+        // add-product.html이 저장한 sellerLocation을 읽어 locationRange 필터링에 사용
+        function getDistanceKm(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2
+                    + Math.cos(lat1 * Math.PI / 180)
+                    * Math.cos(lat2 * Math.PI / 180)
+                    * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
         function debounce(func, wait) {
             let timeout;
             return function executedFunction(...args) {
@@ -130,12 +144,32 @@
                     const userData = userSnap.data();
                     myLocation = userData.location || { latitude: 35.1631, longitude: 129.1635, address: '부산 해운대구' };
                     locationRange = userData.locationRange || 5;
+
+                    // ✅ BUG FIX #3: Firestore에서 프로필 사진 URL 로드 후 헤더에 즉시 반영
+                    const photoURL = userData.photoURL || userData.profileImage || '';
+                    if (photoURL) {
+                        updateHeaderProfilePhoto(photoURL);
+                    }
                 }
             } catch (error) {
                 console.error('위치 로드 오류:', error);
             }
             
             updateLocationUI();
+        }
+
+        // ✅ BUG FIX #3: 헤더 프로필 사진 업데이트 함수
+        function updateHeaderProfilePhoto(url) {
+            const photoEl = document.getElementById('headerUserPhoto');
+            const iconEl  = document.getElementById('headerUserIcon');
+            if (!photoEl || !iconEl || !url) return;
+            photoEl.src = url;
+            photoEl.classList.remove('hidden');
+            iconEl.classList.add('hidden');
+            photoEl.onerror = () => {
+                photoEl.classList.add('hidden');
+                iconEl.classList.remove('hidden');
+            };
         }
 
         function updateLocationUI() {
@@ -157,6 +191,16 @@
                 writeBtn.classList.remove('hidden');
                 if (floatingWriteBtn) floatingWriteBtn.classList.remove('hidden');
                 myPageBtn.onclick = () => location.href = 'my-page.html';
+
+                // ✅ BUG FIX #3: 로그인 시 Auth의 photoURL로 헤더 사진 즉시 표시 (Firestore 로드 전 빠른 표시)
+                if (user.photoURL) {
+                    updateHeaderProfilePhoto(user.photoURL);
+                }
+
+                // ✅ BUG FIX #4: 알림 버튼 표시 및 실시간 구독 시작
+                document.getElementById('notifBtn').classList.remove('hidden');
+                subscribeToNotifications(user.uid);
+
             } else {
                 authBtns.innerHTML = `
                     <a href="login.html" class="text-green-600 hover:text-green-700 font-medium text-sm">
@@ -170,6 +214,10 @@
                         location.href = 'login.html';
                     }
                 };
+
+                // 비로그인 시 알림 버튼 숨김
+                document.getElementById('notifBtn').classList.add('hidden');
+                document.getElementById('notifBadge').classList.add('hidden');
             }
         }
 
@@ -220,7 +268,22 @@
                 if (currentCategory !== 'all') {
                     products = products.filter(p => p.category === currentCategory);
                 }
-                
+
+                // ✅ 연동 FIX: 1.5단계 - 거리 기반 필터링
+                // login.html에서 저장한 myLocation + locationRange 사용
+                // add-product.html에서 저장한 sellerLocation을 읽어 거리 계산
+                if (myLocation && myLocation.latitude && myLocation.longitude) {
+                    products = products.filter(p => {
+                        // sellerLocation 없는 상품(기존 등록 상품)은 항상 표시
+                        if (!p.sellerLocation || !p.sellerLocation.latitude) return true;
+                        const dist = getDistanceKm(
+                            myLocation.latitude, myLocation.longitude,
+                            p.sellerLocation.latitude, p.sellerLocation.longitude
+                        );
+                        return dist <= locationRange;
+                    });
+                }
+
                 // 2. 판매완료 숨김 (클라이언트)
                 if (hideSoldItems) {
                     products = products.filter(p => p.status !== '판매완료');
@@ -337,8 +400,23 @@
             const isFree = product.price === 0;
             const displayPrice = isFree ? '나눔 🌱' : (product.price ? Number(product.price).toLocaleString() + '원' : '가격 미정');
             const title = product.title || '제목 없음';
-            const location = product.sellerLocation || product.location || '위치 정보 없음';
+            // ✅ 연동 FIX: location 표시 - 주소 문자열 우선, 없으면 텍스트 필드
+            const locationLabel = (typeof product.location === 'string')
+                ? product.location
+                : (product.location?.address || product.sellerLocation?.address || '위치 정보 없음');
             const date = formatDate(product.createdAt);
+
+            // ✅ 연동 FIX: 거리 계산 표시 (내 위치 있고 sellerLocation 있을 때만)
+            let distanceLabel = '';
+            if (myLocation && myLocation.latitude && product.sellerLocation?.latitude) {
+                const dist = getDistanceKm(
+                    myLocation.latitude, myLocation.longitude,
+                    product.sellerLocation.latitude, product.sellerLocation.longitude
+                );
+                distanceLabel = dist < 1
+                    ? ` · <span class="text-green-600 font-medium">${Math.round(dist * 1000)}m</span>`
+                    : ` · <span class="text-green-600 font-medium">${dist.toFixed(1)}km</span>`;
+            }
             
             const viewCount = product.views || 0;
             const chatCount = product.chatCount || 0;
@@ -368,7 +446,7 @@
                         <h3 class="font-bold text-gray-900 text-sm mb-2 truncate">${escapeHtml(title)}</h3>
                         <p class="text-lg font-bold mb-2 ${isFree ? 'text-green-600' : 'text-gray-900'}">${displayPrice}</p>
                         <div class="flex items-center justify-between text-xs text-gray-500 mb-2">
-                            <span><i class="fas fa-map-marker-alt mr-1"></i>${escapeHtml(location)}</span>
+                            <span><i class="fas fa-map-marker-alt mr-1"></i>${escapeHtml(locationLabel)}${distanceLabel}</span>
                             <span>${date}</span>
                         </div>
                         <div class="flex items-center gap-3 text-xs text-gray-400">
@@ -767,10 +845,116 @@
             }
         };
 
+        // ========== ✅ BUG FIX #4: 채팅 알림 실시간 구독 ==========
+        let unsubscribeNotif = null;
+
+        function subscribeToNotifications(uid) {
+            // 기존 구독 해제
+            if (unsubscribeNotif) unsubscribeNotif();
+
+            // 내가 판매자인 채팅방 실시간 감지
+            const chatsRef = collection(db, 'chats');
+            const q = query(chatsRef, where('sellerId', '==', uid));
+
+            unsubscribeNotif = onSnapshot(q, (snapshot) => {
+                let totalUnread = 0;
+                const chatList = [];
+
+                snapshot.docs.forEach(d => {
+                    const data = d.data();
+                    const unread = data.unreadCount?.[uid] || 0;
+                    totalUnread += unread;
+                    if (unread > 0 || data.lastMessage) {
+                        chatList.push({ id: d.id, ...data, myUnread: unread });
+                    }
+                });
+
+                // 뱃지 업데이트
+                const badge = document.getElementById('notifBadge');
+                if (totalUnread > 0) {
+                    badge.classList.remove('hidden');
+                    badge.textContent = totalUnread > 9 ? '9+' : totalUnread;
+                } else {
+                    badge.classList.add('hidden');
+                }
+
+                // 알림 패널 목록 업데이트
+                renderNotifPanel(chatList, uid);
+            }, (error) => {
+                console.error('알림 구독 오류:', error);
+            });
+        }
+
+        function renderNotifPanel(chatList, uid) {
+            const listEl = document.getElementById('notifList');
+            if (!listEl) return;
+
+            if (chatList.length === 0) {
+                listEl.innerHTML = `
+                    <div class="text-center py-12 text-gray-400">
+                        <i class="fas fa-bell-slash text-4xl mb-3"></i>
+                        <p class="text-sm">새로운 채팅 알림이 없습니다</p>
+                    </div>`;
+                return;
+            }
+
+            // 최신 메시지 순 정렬
+            chatList.sort((a, b) => {
+                const aT = a.lastMessageTime?.seconds || 0;
+                const bT = b.lastMessageTime?.seconds || 0;
+                return bT - aT;
+            });
+
+            listEl.innerHTML = chatList.map(chat => {
+                const hasUnread = chat.myUnread > 0;
+                const lastMsg = chat.lastMessage || '새로운 채팅';
+                const timeStr = chat.lastMessageTime
+                    ? formatDate(chat.lastMessageTime) : '';
+
+                return `
+                    <a href="chat-room.html?id=${escapeHtml(chat.id)}"
+                       class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition cursor-pointer
+                              ${hasUnread ? 'bg-green-50' : ''}">
+                        <div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                            ${chat.productImage
+                                ? `<img src="${escapeHtml(chat.productImage)}" class="w-10 h-10 rounded-full object-cover">`
+                                : '<i class="fas fa-seedling text-green-600"></i>'
+                            }
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-bold text-gray-800 truncate">
+                                ${escapeHtml(chat.productTitle || '식물 채팅')}
+                            </p>
+                            <p class="text-xs text-gray-500 truncate">${escapeHtml(lastMsg)}</p>
+                            <p class="text-[10px] text-gray-400 mt-0.5">${timeStr}</p>
+                        </div>
+                        ${hasUnread ? `
+                            <span class="flex-shrink-0 bg-green-600 text-white text-xs font-bold
+                                         rounded-full w-5 h-5 flex items-center justify-center">
+                                ${chat.myUnread}
+                            </span>` : ''}
+                    </a>
+                `;
+            }).join('');
+        }
+
+        window.toggleNotifPanel = function() {
+            const panel = document.getElementById('notifPanel');
+            panel.classList.toggle('hidden');
+        };
+
+        // 패널 외부 클릭 시 닫기 (기존 click 이벤트에 추가)
+
         // ========== 위치 설정 모달 ==========
         window.openLocationModal = function() {
             document.getElementById('locationModal').classList.remove('hidden');
             document.getElementById('currentLocationModal').textContent = myLocation?.address || '부산 해운대구';
+
+            // ✅ BUG FIX #1: 슬라이더를 항상 현재 저장된 locationRange 값으로 초기화
+            const rangeSlider = document.querySelector('#locationModal input[type=range]');
+            rangeSlider.value = locationRange;
+            document.getElementById('rangeValue').textContent = locationRange + 'km';
+
             document.body.style.overflow = 'hidden';
         };
 
@@ -835,6 +1019,13 @@
             const locationModal = document.getElementById('locationModal');
             if (e.target === locationModal) {
                 closeLocationModal();
+            }
+
+            // ✅ BUG FIX #4: 알림 패널 외부 클릭 시 닫기
+            const notifPanel = document.getElementById('notifPanel');
+            const notifBtn   = document.getElementById('notifBtn');
+            if (notifPanel && !notifPanel.contains(e.target) && !notifBtn.contains(e.target)) {
+                notifPanel.classList.add('hidden');
             }
         });
     </script>
@@ -1078,8 +1269,51 @@
                 </a>
                 
                 <div class="flex items-center gap-2 header-actions">
+                    <!-- ✅ BUG FIX #4: 채팅 알림 버튼 (로그인 시 표시) -->
+                    <div class="relative">
+                        <button id="notifBtn" class="hidden header-btn text-gray-600 hover:text-green-700 relative"
+                                onclick="toggleNotifPanel()" title="채팅 알림">
+                            <i class="fas fa-bell text-lg"></i>
+                            <span id="notifBadge"
+                                  class="hidden absolute -top-1 -right-1 bg-red-500 text-white
+                                         text-[10px] font-bold rounded-full w-4 h-4
+                                         flex items-center justify-center">0</span>
+                        </button>
+
+                        <!-- 알림 패널 (드롭다운) -->
+                        <div id="notifPanel"
+                             class="hidden absolute right-0 top-10 w-80 bg-white rounded-2xl shadow-2xl
+                                    border border-gray-100 z-[200] overflow-hidden">
+                            <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                                <h4 class="font-bold text-gray-800 text-sm">
+                                    <i class="fas fa-comment-dots text-green-600 mr-1"></i>채팅 알림
+                                </h4>
+                                <button onclick="toggleNotifPanel()"
+                                        class="text-gray-400 hover:text-gray-600 text-sm">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                            <div id="notifList" class="max-h-80 overflow-y-auto p-2">
+                                <div class="text-center py-8 text-gray-400">
+                                    <i class="fas fa-bell-slash text-3xl mb-2"></i>
+                                    <p class="text-xs">새로운 채팅 알림이 없습니다</p>
+                                </div>
+                            </div>
+                            <div class="border-t border-gray-100 p-2">
+                                <a href="my-page.html" class="block text-center text-xs text-green-600
+                                                              hover:text-green-700 font-medium py-2">
+                                    채팅 전체 보기 →
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
                     <button id="myPageBtn" class="header-btn text-gray-600 hover:text-green-700 flex items-center gap-1">
-                        <i class="fas fa-user-circle text-lg"></i>
+                        <!-- ✅ BUG FIX #3: 프로필 사진 표시 (기본은 아이콘, 사진 있으면 img로 교체) -->
+                        <img id="headerUserPhoto"
+                             class="hidden w-7 h-7 rounded-full object-cover border-2 border-green-400"
+                             alt="내 프로필">
+                        <i id="headerUserIcon" class="fas fa-user-circle text-lg"></i>
                         <span class="hidden sm:inline text-sm font-medium">마이</span>
                     </button>
                     <button id="writeBtn" class="hidden header-btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl font-medium transition" 
@@ -1400,7 +1634,7 @@
                 <button onclick="closeLocationModal()" class="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl hover:bg-gray-200 transition">
                     취소
                 </button>
-                <button onclick="updateLocationRange(document.querySelector('input[type=range]').value)" 
+                <button onclick="updateLocationRange(document.querySelector('#locationModal input[type=range]').value)" 
                         class="flex-1 bg-green-600 text-white py-3 rounded-xl hover:bg-green-700 transition">
                     저장
                 </button>

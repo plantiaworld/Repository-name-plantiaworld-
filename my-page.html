@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>마이페이지 - PlantiaWorld</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- ✅ BUG FIX #2: Leaflet 지도 라이브러리 (주소 → 지도 자동 이동) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     
     <style>
@@ -912,6 +915,74 @@
             }
         });
 
+        // ========== ✅ BUG FIX #2: 주소 입력 → 지도 자동 이동 ==========
+        let profileEditMap = null;
+        let profileEditMarker = null;
+
+        window.searchLocationOnMap = async function() {
+            const address = document.getElementById('editLocation').value.trim();
+            const errEl   = document.getElementById('locationMapError');
+            const previewEl = document.getElementById('locationMapPreview');
+            const labelEl   = document.getElementById('locationMapLabel');
+
+            if (!address) return;
+
+            errEl.classList.add('hidden');
+
+            try {
+                // Nominatim (OpenStreetMap) 무료 Geocoding API 사용
+                const encoded = encodeURIComponent(address);
+                const res  = await fetch(
+                    `https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1&accept-language=ko`,
+                    { headers: { 'Accept-Language': 'ko' } }
+                );
+                const data = await res.json();
+
+                if (!data || data.length === 0) {
+                    errEl.classList.remove('hidden');
+                    previewEl.classList.add('hidden');
+                    return;
+                }
+
+                const lat = parseFloat(data[0].lat);
+                const lng = parseFloat(data[0].lon);
+                const displayName = data[0].display_name;
+
+                // 지도 미리보기 표시
+                previewEl.classList.remove('hidden');
+                labelEl.innerHTML = `<i class="fas fa-map-pin mr-1"></i>${address}`;
+
+                // 지도 초기화 or 이동
+                if (!profileEditMap) {
+                    // 지도가 처음 생성될 때 컨테이너가 visible해야 함 → nextTick
+                    setTimeout(() => {
+                        profileEditMap = L.map('profileEditMap').setView([lat, lng], 15);
+                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                            attribution: '© OpenStreetMap'
+                        }).addTo(profileEditMap);
+                        profileEditMarker = L.marker([lat, lng])
+                            .addTo(profileEditMap)
+                            .bindPopup(address)
+                            .openPopup();
+                    }, 50);
+                } else {
+                    profileEditMap.setView([lat, lng], 15);
+                    if (profileEditMarker) {
+                        profileEditMarker.setLatLng([lat, lng]);
+                        profileEditMarker.bindPopup(address).openPopup();
+                    }
+                    profileEditMap.invalidateSize();
+                }
+
+                showToast(`📍 "${address}" 위치를 찾았습니다`);
+
+            } catch (error) {
+                console.error('주소 검색 오류:', error);
+                errEl.classList.remove('hidden');
+                previewEl.classList.add('hidden');
+            }
+        };
+
     </script>
 </head>
 <body>
@@ -1308,11 +1379,33 @@
                     <input type="text" id="editRealName" class="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:outline-none transition" placeholder="실명 입력">
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-600 mb-2">
-                        <i class="fas fa-map-marker-alt mr-1"></i>지역
-                    </label>
-                    <input type="text" id="editLocation" class="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:outline-none transition" placeholder="예: 서울시 강남구">
-                </div>
+                        <label class="block text-sm font-bold text-gray-600 mb-2">
+                            <i class="fas fa-map-marker-alt mr-1"></i>지역
+                            <span class="text-xs text-green-600 font-normal ml-1">입력 후 Enter 또는 🔍 클릭 → 지도 이동</span>
+                        </label>
+                        <div class="flex gap-2">
+                            <input type="text" id="editLocation"
+                                   class="flex-1 p-3 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:outline-none transition"
+                                   placeholder="예: 부산 해운대구"
+                                   onkeydown="if(event.key==='Enter'){event.preventDefault();searchLocationOnMap();}">
+                            <button onclick="searchLocationOnMap()"
+                                    class="bg-green-600 text-white px-4 rounded-xl hover:bg-green-700 transition text-sm font-medium">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                        <!-- ✅ BUG FIX #2: 지도 미리보기 -->
+                        <div id="locationMapPreview" class="hidden mt-3">
+                            <p id="locationMapLabel" class="text-xs text-green-700 font-medium mb-2">
+                                <i class="fas fa-map-pin mr-1"></i>
+                            </p>
+                            <div id="profileEditMap"
+                                 style="height:180px;border-radius:12px;border:2px solid #d1fae5;overflow:hidden;">
+                            </div>
+                        </div>
+                        <p id="locationMapError" class="hidden text-xs text-red-500 mt-1">
+                            <i class="fas fa-exclamation-circle mr-1"></i>주소를 찾을 수 없습니다.
+                        </p>
+                    </div>
                 
                 <div class="flex gap-3 pt-4">
                     <button onclick="closeModal('editProfileModal')" class="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl hover:bg-gray-200 transition font-medium">

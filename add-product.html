@@ -361,6 +361,8 @@
         let map = null;
         let mapMarker = null;
         let selectedLocation = null;
+        // ✅ 연동 FIX: 판매자 좌표 (index.html 거리 필터링에 필요)
+        let sellerGeoLocation = null;
 
         // ========== URL에서 상품 ID 확인 (수정 모드) ==========
         const urlParams = new URLSearchParams(window.location.search);
@@ -408,6 +410,21 @@
             
             currentUser = user;
             console.log('✅ 로그인된 사용자:', user.uid);
+
+            // ✅ 연동 FIX: 판매자의 저장된 위치를 Firestore에서 읽어옴
+            //    → 상품 저장 시 sellerLocation 필드로 함께 저장
+            //    → index.html의 거리 기반 필터링(locationRange)이 이 필드로 작동
+            try {
+                const userDoc = await getDoc(doc(db, 'users', user.uid));
+                if (userDoc.exists()) {
+                    const loc = userDoc.data().location;
+                    if (loc && loc.latitude && loc.longitude) {
+                        sellerGeoLocation = { latitude: loc.latitude, longitude: loc.longitude };
+                    }
+                }
+            } catch (e) {
+                console.warn('판매자 위치 로드 실패 (무시):', e);
+            }
             
             // 수정 모드일 경우 기존 데이터 로드
             if (isEditMode) {
@@ -714,7 +731,10 @@
                 if (isEditMode) {
                     // 수정 모드
                     productData.updatedAt = serverTimestamp();
-                    
+                    // ✅ 연동 FIX: 수정 시에도 최신 판매자 좌표 갱신
+                    if (sellerGeoLocation) {
+                        productData.sellerLocation = sellerGeoLocation;
+                    }
                     await updateDoc(doc(db, 'products', productId), productData);
                     
                     showToast("🌱 상품이 성공적으로 수정되었습니다!");
@@ -732,6 +752,10 @@
                     productData.likeCount = 0;
                     productData.chatCount = 0;
                     productData.likedBy = [];
+                    // ✅ 연동 FIX: 판매자 좌표 저장 → index.html 거리 필터링 가능
+                    if (sellerGeoLocation) {
+                        productData.sellerLocation = sellerGeoLocation;
+                    }
                     
                     const docRef = await addDoc(collection(db, "products"), productData);
                     

@@ -657,9 +657,13 @@
                         buyerId: currentUser.uid,
                         participants: [currentProduct.sellerId, currentUser.uid],
                         createdAt: serverTimestamp(),
-                        lastMessage: '',
+                        lastMessage: '채팅을 시작했습니다 🌱',
                         lastMessageTime: serverTimestamp(),
-                        unreadCount: { [currentProduct.sellerId]: 0, [currentUser.uid]: 0 }
+                        // ✅ BUG FIX #4: 채팅방 생성 시 판매자에게 즉시 알림 카운트 1 부여
+                        unreadCount: {
+                            [currentProduct.sellerId]: 1,
+                            [currentUser.uid]: 0
+                        }
                     });
                     
                     // 상품의 채팅 수 증가

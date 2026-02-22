@@ -150,17 +150,94 @@
                 attribution: '© OpenStreetMap'
             }).addTo(map);
 
-            map.on('click', function(e) {
+            map.on('click', async function(e) {
                 const { lat, lng } = e.latlng;
-                selectedLocation = { latitude: lat, longitude: lng };
-                
+
                 if (marker) map.removeLayer(marker);
                 marker = L.marker([lat, lng]).addTo(map);
-                
-                document.getElementById('locationStatus').innerHTML = 
-                    `<i class="fas fa-check-circle text-green-600 mr-2"></i>위치 선택 완료`;
+
+                // ✅ BUG FIX #2: 지도 클릭 시 Reverse Geocoding으로 주소명 자동 획득
+                let addressText = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+                try {
+                    const res  = await fetch(
+                        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ko`
+                    );
+                    const data = await res.json();
+                    if (data && data.address) {
+                        const a = data.address;
+                        // 한국 행정구역 순서로 조합
+                        addressText = [
+                            a.city || a.county || a.province || a.state,
+                            a.suburb || a.quarter || a.neighbourhood || a.district
+                        ].filter(Boolean).join(' ') || data.display_name?.split(',')[0] || addressText;
+                    }
+                } catch (_) { /* 네트워크 오류 시 좌표 텍스트 사용 */ }
+
+                selectedLocation = {
+                    latitude: lat,
+                    longitude: lng,
+                    address: addressText     // ✅ 주소 문자열도 함께 저장
+                };
+
+                document.getElementById('locationStatus').innerHTML =
+                    `<i class="fas fa-check-circle text-green-600 mr-2"></i>${addressText}`;
+                document.getElementById('addressSearchInput').value = addressText;
+                document.getElementById('addressSearchError').classList.add('hidden');
             });
         }
+
+        // ========== ✅ BUG FIX #2: 주소 입력 → 지도 자동 이동 ==========
+        window.searchAddress = async function() {
+            const query  = document.getElementById('addressSearchInput').value.trim();
+            const errEl  = document.getElementById('addressSearchError');
+            if (!query) return;
+
+            errEl.classList.add('hidden');
+            document.getElementById('locationStatus').innerHTML =
+                '<i class="fas fa-spinner fa-spin text-green-600 mr-2"></i>검색 중...';
+
+            try {
+                const encoded = encodeURIComponent(query);
+                const res  = await fetch(
+                    `https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1&accept-language=ko`
+                );
+                const data = await res.json();
+
+                if (!data || data.length === 0) {
+                    errEl.classList.remove('hidden');
+                    document.getElementById('locationStatus').innerHTML =
+                        '<i class="fas fa-map-marker-alt text-green-600 mr-2"></i>주소를 입력하거나 지도를 클릭해 주세요';
+                    return;
+                }
+
+                const lat = parseFloat(data[0].lat);
+                const lng = parseFloat(data[0].lon);
+
+                // 지도 이동 및 마커 설정
+                if (!map) initMap();
+                map.setView([lat, lng], 15);
+
+                if (marker) map.removeLayer(marker);
+                marker = L.marker([lat, lng]).addTo(map)
+                          .bindPopup(query).openPopup();
+
+                // 주소를 포함한 selectedLocation 저장
+                selectedLocation = {
+                    latitude: lat,
+                    longitude: lng,
+                    address: query           // ✅ 입력한 주소 문자열 저장
+                };
+
+                document.getElementById('locationStatus').innerHTML =
+                    `<i class="fas fa-check-circle text-green-600 mr-2"></i>${query}`;
+
+            } catch (error) {
+                console.error('주소 검색 오류:', error);
+                errEl.classList.remove('hidden');
+                document.getElementById('locationStatus').innerHTML =
+                    '<i class="fas fa-map-marker-alt text-green-600 mr-2"></i>주소를 입력하거나 지도를 클릭해 주세요';
+            }
+        };
 
         // ========== 폼 제출 처리 ==========
         document.getElementById('authForm').addEventListener('submit', async (e) => {
@@ -207,8 +284,10 @@
                         realName: realName,
                         username: username,
                         displayName: username,
-                        location: selectedLocation ? `${selectedLocation.latitude}, ${selectedLocation.longitude}` : '',
-                        locationData: selectedLocation,
+                        // ✅ BUG FIX #2: location을 {latitude, longitude, address} 객체로 저장
+                        //    → index.html의 myLocation.address가 정상적으로 표시됨
+                        location: selectedLocation,
+                        locationRange: 5,   // 기본 거래거리
                         createdAt: serverTimestamp(),
                         photoURL: null,
                         profileImage: null,
@@ -557,13 +636,34 @@
                     </div>
                 </div>
                 <div>
-                    <label class="block text-xs font-bold text-gray-600 mb-1">활동 지역 (지도 클릭)</label>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">
+                        활동 지역
+                        <span class="text-green-600 font-normal ml-1">주소 입력 또는 지도 클릭</span>
+                    </label>
+
+                    <!-- ✅ BUG FIX #2: 주소 입력창 → 지도 자동 이동 -->
+                    <div class="flex gap-2 mb-2">
+                        <input type="text" id="addressSearchInput"
+                               class="flex-1 p-3 border border-gray-200 rounded-xl text-sm outline-none
+                                      focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                               placeholder="예) 부산 해운대구, 서울 강남구"
+                               onkeydown="if(event.key==='Enter'){event.preventDefault(); searchAddress();}">
+                        <button type="button" onclick="searchAddress()"
+                                class="bg-green-600 hover:bg-green-700 text-white px-4 rounded-xl text-sm font-medium transition-colors whitespace-nowrap">
+                            <i class="fas fa-search mr-1"></i>검색
+                        </button>
+                    </div>
+
                     <div id="map"></div>
+
                     <div class="mt-3 p-3 bg-green-50 rounded-xl">
                         <p id="locationStatus" class="text-sm text-green-800 font-medium">
-                            <i class="fas fa-map-marker-alt text-green-600 mr-2"></i>지도를 클릭해 주세요
+                            <i class="fas fa-map-marker-alt text-green-600 mr-2"></i>주소를 입력하거나 지도를 클릭해 주세요
                         </p>
                     </div>
+                    <p id="addressSearchError" class="hidden text-xs text-red-500 mt-1">
+                        <i class="fas fa-exclamation-circle mr-1"></i>주소를 찾을 수 없습니다. 다시 입력해 주세요.
+                    </p>
                 </div>
             </div>
 
