@@ -3,37 +3,26 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ========== 공통 함수 ==========
-
-    // 로그인 여부 확인
     function isLoggedIn() {
       return request.auth != null;
     }
 
-    // 본인 여부 확인
     function isOwner(uid) {
       return isLoggedIn() && request.auth.uid == uid;
     }
 
-    // ⭐ 관리자 여부 확인 - 본인 Firebase UID로 교체하세요
+    // ⭐ 관리자 UID — 본인 Firebase UID로 교체하세요
     function isAdmin() {
       return isLoggedIn() && request.auth.uid in [
         'LIuwCkomQmf0iHf7QoBXs57OecI2'
       ];
     }
 
-    // 해당 상품의 판매자 여부 확인
-    function isProductSeller(productData) {
-      return isLoggedIn() && request.auth.uid == productData.sellerId;
-    }
-
 
     // ========== products 컬렉션 ==========
     match /products/{productId} {
-
-      // 읽기: 누구나 가능 (비로그인도 상품 조회 가능)
       allow read: if true;
 
-      // 등록: 로그인한 사용자만, sellerId는 반드시 본인 uid
       allow create: if isLoggedIn()
         && request.resource.data.sellerId == request.auth.uid
         && request.resource.data.title is string
@@ -42,23 +31,13 @@ service cloud.firestore {
         && request.resource.data.price is number
         && request.resource.data.price >= 0;
 
-      // 수정: 판매자 본인 또는 관리자
-      // 단, views / likeCount / chatCount / likedBy 는 다른 사용자도 업데이트 가능
       allow update: if isLoggedIn() && (
-        // 관리자: 모든 필드 수정 가능
         isAdmin()
-        ||
-        // 판매자 본인: 모든 필드 수정 가능
-        resource.data.sellerId == request.auth.uid
-        ||
-        // 다른 사용자: views, likeCount, chatCount, likedBy 필드만 허용
-        (
-          request.resource.data.diff(resource.data).affectedKeys()
+        || resource.data.sellerId == request.auth.uid
+        || request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['views', 'likeCount', 'chatCount', 'likedBy'])
-        )
       );
 
-      // 삭제: 판매자 본인 또는 관리자
       allow delete: if isLoggedIn()
         && (resource.data.sellerId == request.auth.uid || isAdmin());
     }
@@ -66,74 +45,76 @@ service cloud.firestore {
 
     // ========== users 컬렉션 ==========
     match /users/{userId} {
-
-      // 읽기: 로그인한 사용자 또는 관리자
       allow read: if isLoggedIn();
-
-      // 생성/수정: 본인 또는 관리자 (관리자는 banned 처리 등 가능)
       allow create: if isOwner(userId);
       allow update: if isOwner(userId) || isAdmin();
-
-      // 삭제: 본인만
       allow delete: if isOwner(userId);
     }
 
 
-   // ========== chats 컬렉션 ==========
-match /chats/{chatId} {
+    // ========== chats 컬렉션 ==========
+    match /chats/{chatId} {
 
-  allow read: if isLoggedIn()
-    && (
-      resource.data.buyerId == request.auth.uid
-      || resource.data.sellerId == request.auth.uid
-    );
-
-  allow create: if isLoggedIn()
-    && request.resource.data.buyerId == request.auth.uid;
-
-  allow update: if isLoggedIn()
-    && (
-      resource.data.buyerId == request.auth.uid
-      || resource.data.sellerId == request.auth.uid
-    );
-
-  allow delete: if false;
-
-  // ⭐ 메시지 서브컬렉션 추가
-  match /messages/{messageId} {
-    allow read, create: if isLoggedIn()
-      && (
-        get(/databases/$(database)/documents/chats/$(chatId)).data.buyerId == request.auth.uid
-        || get(/databases/$(database)/documents/chats/$(chatId)).data.sellerId == request.auth.uid
+      allow read: if isLoggedIn() && (
+        resource.data.buyerId  == request.auth.uid ||
+        resource.data.sellerId == request.auth.uid ||
+        isAdmin()
       );
-    allow update, delete: if false;
-  }
-}
+
+      allow create: if isLoggedIn()
+        && request.resource.data.buyerId == request.auth.uid;
+
+      allow update: if isLoggedIn() && (
+        resource.data.buyerId  == request.auth.uid ||
+        resource.data.sellerId == request.auth.uid ||
+        isAdmin()
+      );
+
+      allow delete: if false;
+
+      // 메시지 서브컬렉션
+      match /messages/{messageId} {
+        allow read, create: if isLoggedIn() && (
+          get(/databases/$(database)/documents/chats/$(chatId)).data.buyerId  == request.auth.uid ||
+          get(/databases/$(database)/documents/chats/$(chatId)).data.sellerId == request.auth.uid
+        );
+        // ✅ 본인 메시지: deleted 플래그 소프트 삭제 허용
+        allow update: if isLoggedIn()
+          && resource.data.senderId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['deleted', 'deletedAt', 'text', 'imageUrl']);
+        // 하드 삭제는 미사용 (소프트 삭제 방식 채택)
+        allow delete: if false;
+      }
+    }
+
+
+    // ========== reports 컬렉션 ==========
+    match /reports/{reportId} {
+      allow read:   if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if false;
+
+      allow create: if isLoggedIn()
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.type   is string
+        && request.resource.data.reason is string;
+    }
+
 
     // ========== inquiries 컬렉션 ==========
     match /inquiries/{inquiryId} {
-
-      // 읽기: 관리자만
-      allow read: if isAdmin();
-
-      // 문의 생성: 누구나 가능 (비로그인 사용자도 문의 가능)
-      allow create: if request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.email is string
-        && request.resource.data.email.size() > 0
-        && request.resource.data.type is string
-        && request.resource.data.type.size() > 0
-        && request.resource.data.title is string
-        && request.resource.data.title.size() > 0
-        && request.resource.data.content is string
-        && request.resource.data.content.size() > 0
-        && request.resource.data.content.size() <= 1000;
-
-      // 수정(답변 처리 등): 관리자만
+      allow read:   if isAdmin();
       allow update: if isAdmin();
-
-      // 삭제: 불가
       allow delete: if false;
+
+      allow create: if
+        request.resource.data.name    is string && request.resource.data.name.size()    > 0 &&
+        request.resource.data.email   is string && request.resource.data.email.size()   > 0 &&
+        request.resource.data.type    is string && request.resource.data.type.size()    > 0 &&
+        request.resource.data.title   is string && request.resource.data.title.size()   > 0 &&
+        request.resource.data.content is string && request.resource.data.content.size() > 0 &&
+        request.resource.data.content.size() <= 1000;
     }
 
   }

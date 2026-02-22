@@ -1006,8 +1006,10 @@
                 const btn = document.getElementById(id);
                 btn.classList.remove('selected','selected-orange','selected-red');
             });
-            document.getElementById('dealConfirmBtn').className = 'deal-confirm-btn inactive';
-            document.getElementById('dealConfirmBtn').textContent = '변경하기';
+            const confirmBtn = document.getElementById('dealConfirmBtn');
+            confirmBtn.className = 'deal-confirm-btn inactive';
+            confirmBtn.textContent = '변경하기';
+            confirmBtn.disabled = false;  // ✅ BUG FIX: 이전 실행의 disabled 상태 반드시 초기화
 
             document.getElementById('dealModal').style.display = 'flex';
             document.body.style.overflow = 'hidden';
@@ -1061,10 +1063,14 @@
                 // 버튼 라벨 업데이트
                 updateDealBtnLabel(selectedDealStatus);
 
-                // 모달 닫기
+                // ✅ BUG FIX: 성공 후 버튼 상태 완전 초기화 후 모달 닫기
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = '변경하기';
+                confirmBtn.className = 'deal-confirm-btn inactive';
+                selectedDealStatus = null;
+
                 document.getElementById('dealModal').style.display = 'none';
                 document.body.style.overflow = '';
-                selectedDealStatus = null;
 
                 // 토스트
                 showDealToast(`거래 상태가 변경되었습니다`);
