@@ -17,6 +17,20 @@
         .image-message { max-width: 200px; border-radius: 12px; margin-top: 4px; cursor: pointer; }
         .message-menu { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.2s; }
         .message-bubble:hover .message-menu { opacity: 1; }
+        /* ✅ 삭제 버튼 */
+        .delete-msg-btn {
+            background: none;
+            border: none;
+            color: #d1d5db;
+            font-size: 11px;
+            cursor: pointer;
+            padding: 0 2px 20px;
+            opacity: 0;
+            transition: opacity 0.2s, color 0.2s;
+            flex-shrink: 0;
+        }
+        .flex:hover .delete-msg-btn { opacity: 1; }
+        .delete-msg-btn:hover { color: #ef4444 !important; }
         textarea { max-height: 120px; overflow-y: auto; }
         
         /* 드롭다운 메뉴 스타일 */
@@ -41,6 +55,71 @@
         }
         .dropdown-item:hover { background: #f1f5f9; }
         .dropdown-item.danger { color: #dc2626; }
+
+        /* ===== 거래 예약 모달 ===== */
+        .deal-modal-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55);
+            z-index: 2000;
+            display: flex; align-items: flex-end; justify-content: center;
+        }
+        .deal-modal {
+            background: #fff;
+            border-radius: 24px 24px 0 0;
+            padding: 28px 24px 36px;
+            width: 100%; max-width: 480px;
+            animation: slideUp 0.25s ease;
+        }
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to   { transform: translateY(0);    opacity: 1; }
+        }
+        .deal-modal h3 {
+            font-size: 17px; font-weight: 700; color: #111827;
+            margin-bottom: 6px;
+        }
+        .deal-modal .sub {
+            font-size: 13px; color: #6b7280; margin-bottom: 20px;
+        }
+        .deal-status-row {
+            display: flex; gap: 10px; margin-bottom: 20px;
+        }
+        .deal-status-btn {
+            flex: 1; padding: 14px 8px;
+            border: 2px solid #e5e7eb; border-radius: 14px;
+            background: #fff; cursor: pointer;
+            text-align: center; font-size: 13px; font-weight: 600;
+            color: #374151; transition: all 0.2s;
+            font-family: 'Noto Sans KR', sans-serif;
+        }
+        .deal-status-btn .icon { font-size: 22px; display: block; margin-bottom: 6px; }
+        .deal-status-btn:hover { border-color: #6ee7b7; background: #f0fdf4; }
+        .deal-status-btn.selected { border-color: #10b981; background: #ecfdf5; color: #065f46; }
+        .deal-status-btn.selected-orange { border-color: #f97316; background: #fff7ed; color: #9a3412; }
+        .deal-status-btn.selected-red    { border-color: #ef4444; background: #fef2f2; color: #991b1b; }
+        .deal-confirm-btn {
+            width: 100%; padding: 15px;
+            border: none; border-radius: 14px;
+            font-size: 16px; font-weight: 700;
+            cursor: pointer; transition: all 0.2s;
+            font-family: 'Noto Sans KR', sans-serif;
+        }
+        .deal-confirm-btn.active {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #fff; box-shadow: 0 4px 14px rgba(16,185,129,0.35);
+        }
+        .deal-confirm-btn.inactive {
+            background: #f3f4f6; color: #9ca3af; cursor: not-allowed;
+        }
+        /* 버튼 위 현재 상태 배지 */
+        #dealBtn.status-reserved {
+            background: #fff7ed; color: #ea580c;
+            border-color: #fed7aa;
+        }
+        #dealBtn.status-sold {
+            background: #fef2f2; color: #dc2626;
+            border-color: #fecaca;
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -74,6 +153,30 @@
             </div>
         </div>
         <button id="dealBtn" class="bg-green-50 text-green-600 px-3 py-1.5 rounded-lg text-xs font-bold border border-green-100 hover:bg-green-100 transition">거래 예약</button>
+    </div>
+
+    <!-- ===== 거래 예약 모달 ===== -->
+    <div id="dealModal" class="deal-modal-overlay" style="display:none;" onclick="closeDealModal(event)">
+        <div class="deal-modal" onclick="event.stopPropagation()">
+            <h3>🌿 거래 상태 변경</h3>
+            <p class="sub" id="dealProductName">상품명 로딩 중...</p>
+
+            <div class="deal-status-row">
+                <button class="deal-status-btn" id="btnSelling" onclick="selectDealStatus('판매중')">
+                    <span class="icon">🟢</span>판매중
+                </button>
+                <button class="deal-status-btn" id="btnReserved" onclick="selectDealStatus('예약중')">
+                    <span class="icon">🟠</span>예약중
+                </button>
+                <button class="deal-status-btn" id="btnSold" onclick="selectDealStatus('판매완료')">
+                    <span class="icon">🔴</span>판매완료
+                </button>
+            </div>
+
+            <button id="dealConfirmBtn" class="deal-confirm-btn inactive" onclick="confirmDealStatus()">
+                변경하기
+            </button>
+        </div>
     </div>
 
     <div id="chatMessages" class="chat-container flex flex-col space-y-4 pb-24">
@@ -359,7 +462,28 @@
                     document.getElementById('productTitle').textContent = product.title || '상품';
                     document.getElementById('productPrice').textContent = price;
                     document.getElementById('productImg').src = product.images?.[0] || 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23e8f5e9%22%2F%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20font-size%3D%2260%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3E%F0%9F%8C%BF%3C%2Ftext%3E%3C%2Fsvg%3E';
-                    
+
+                    // 거래 예약 버튼: 판매자만 표시, 현재 상태 반영
+                    const dealBtn = document.getElementById('dealBtn');
+                    const isSeller = currentUser && chatData && currentUser.uid === chatData.sellerId;
+                    if (isSeller) {
+                        dealBtn.style.display = '';
+                        updateDealBtnLabel(product.status || '판매중');
+                    } else {
+                        // 구매자는 버튼 숨김 (상태만 텍스트로 표시)
+                        dealBtn.style.display = 'none';
+                        const statusBadge = document.createElement('span');
+                        statusBadge.className = 'text-xs font-bold px-2 py-1 rounded-lg';
+                        const s = product.status || '판매중';
+                        statusBadge.style.cssText = s === '판매완료'
+                            ? 'background:#fef2f2;color:#dc2626'
+                            : s === '예약중'
+                            ? 'background:#fff7ed;color:#ea580c'
+                            : 'background:#ecfdf5;color:#065f46';
+                        statusBadge.textContent = s;
+                        dealBtn.parentNode.replaceChild(statusBadge, dealBtn);
+                    }
+
                     // 상품 클릭 시 상세 페이지로 이동
                     document.getElementById('productImg').onclick = () => {
                         window.location.href = `product-detail.html?id=${productId}`;
@@ -457,23 +581,28 @@
             
             // 일반 메시지
             const senderName = isMyMessage ? '나' : (otherUser?.displayName || otherUser?.username || otherUser?.nickname || otherUser?.email || '사용자');
-            
+            const isDeleted = data.deleted === true;
+
             messageDiv.innerHTML = `
-                <div class="flex flex-col ${isMyMessage ? 'items-end' : 'items-start'} max-w-[75%]">
-                    ${!isMyMessage ? `<span class="text-xs text-gray-500 mb-1 ml-1">${escapeHtml(senderName)}</span>` : ''}
-                    <div class="message-bubble ${isMyMessage ? 'my-message' : 'other-message'}">
-                        ${messageContent}
-                        ${isMyMessage ? `
-                            <div class="message-menu">
-                                <button onclick="toggleMessageMenu(event, '${messageId}')" class="text-white hover:text-gray-200 text-sm">
-                                    <i class="fas fa-ellipsis-h"></i>
-                                </button>
-                            </div>
-                        ` : ''}
+                <div class="flex items-end gap-1 ${isMyMessage ? 'flex-row-reverse' : 'flex-row'} max-w-[75%]">
+                    <div class="flex flex-col ${isMyMessage ? 'items-end' : 'items-start'}">
+                        ${!isMyMessage ? `<span class="text-xs text-gray-500 mb-1 ml-1">${escapeHtml(senderName)}</span>` : ''}
+                        <div class="message-bubble ${isMyMessage ? 'my-message' : 'other-message'} ${isDeleted ? 'opacity-50' : ''}">
+                            ${isDeleted
+                                ? '<p class="text-xs italic" style="opacity:0.7"><i class="fas fa-ban" style="margin-right:4px"></i>삭제된 메시지입니다</p>'
+                                : messageContent}
+                        </div>
+                        <span class="text-[10px] text-gray-400 mt-1 mx-1">
+                            ${formatTimestamp(data.timestamp)}
+                        </span>
                     </div>
-                    <span class="text-[10px] text-gray-400 mt-1 mx-1">
-                        ${formatTimestamp(data.timestamp)}
-                    </span>
+                    ${isMyMessage && !isDeleted ? `
+                        <button onclick="confirmDeleteMessage('${messageId}')"
+                                class="delete-msg-btn"
+                                title="메시지 삭제">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    ` : ''}
                 </div>
             `;
             
@@ -668,7 +797,7 @@
             
             // 거래 예약 버튼
             document.getElementById('dealBtn').onclick = () => {
-                alert('거래 예약 기능이 곧 제공될 예정입니다.');
+                openDealModal();
             };
         }
 
@@ -781,30 +910,190 @@
             document.getElementById('modalImage').src = '';
         };
 
-        window.toggleMessageMenu = function(event, messageId) {
-            event.stopPropagation();
-            // 메시지 메뉴 구현 (복사, 삭제 등)
-            const menu = confirm('이 메시지를 삭제하시겠습니까?');
-            if (menu) {
-                deleteMessage(messageId);
-            }
+        // ✅ 삭제 확인 토스트 UI (confirm 대신 인라인 확인)
+        window.confirmDeleteMessage = function(messageId) {
+            // 기존 확인 팝업 제거
+            const existing = document.getElementById('deleteConfirmPopup');
+            if (existing) existing.remove();
+
+            const popup = document.createElement('div');
+            popup.id = 'deleteConfirmPopup';
+            popup.style.cssText = `
+                position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
+                background: #1f2937; color: white; border-radius: 14px;
+                padding: 14px 20px; z-index: 9999; display: flex;
+                align-items: center; gap: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+                font-size: 14px; font-family: 'Noto Sans KR', sans-serif;
+            `;
+            popup.innerHTML = `
+                <span>메시지를 삭제할까요?</span>
+                <button onclick="deleteMessage('${messageId}'); document.getElementById('deleteConfirmPopup').remove();"
+                        style="background:#ef4444; border:none; color:white; padding:6px 14px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600;">
+                    삭제
+                </button>
+                <button onclick="document.getElementById('deleteConfirmPopup').remove();"
+                        style="background:#374151; border:none; color:#d1d5db; padding:6px 14px; border-radius:8px; cursor:pointer; font-size:13px;">
+                    취소
+                </button>
+            `;
+            document.body.appendChild(popup);
+
+            // 3초 후 자동 닫힘
+            setTimeout(() => { if (popup.parentNode) popup.remove(); }, 3000);
         };
 
         window.deleteMessage = async function(messageId) {
             try {
                 const messageDocRef = doc(db, 'chats', chatId, 'messages', messageId);
-                await deleteDoc(messageDocRef);
+                // ✅ 실제 삭제 대신 deleted 플래그로 소프트 삭제
+                //    → 상대방 화면에도 "삭제된 메시지" 표시
+                await updateDoc(messageDocRef, {
+                    deleted: true,
+                    deletedAt: serverTimestamp(),
+                    text: null,
+                    imageUrl: null
+                });
                 console.log('✅ 메시지 삭제 완료');
             } catch (error) {
                 console.error('❌ 메시지 삭제 실패:', error);
-                
                 if (error.code === 'permission-denied') {
-                    alert('메시지 삭제 권한이 없습니다.');
+                    alert('메시지 삭제 권한이 없습니다. Firebase Rules를 확인하세요.');
                 } else {
                     alert('메시지 삭제에 실패했습니다.');
                 }
             }
         };
+
+        // ============================================
+        // 거래 예약 기능
+        // ============================================
+        let selectedDealStatus = null;
+
+        function updateDealBtnLabel(status) {
+            const btn = document.getElementById('dealBtn');
+            if (!btn) return;
+            btn.classList.remove('status-reserved', 'status-sold');
+            if (status === '예약중') {
+                btn.textContent = '🟠 예약중';
+                btn.classList.add('status-reserved');
+            } else if (status === '판매완료') {
+                btn.textContent = '🔴 판매완료';
+                btn.classList.add('status-sold');
+            } else {
+                btn.textContent = '거래 예약';
+            }
+        }
+
+        window.openDealModal = function() {
+            if (!chatData || !chatData.productId) {
+                alert('상품 정보를 불러올 수 없습니다.');
+                return;
+            }
+            // 판매자만 사용 가능
+            if (currentUser.uid !== chatData.sellerId) {
+                alert('거래 상태는 판매자만 변경할 수 있습니다.');
+                return;
+            }
+            selectedDealStatus = null;
+
+            // 상품명 표시
+            const titleEl = document.getElementById('productTitle');
+            document.getElementById('dealProductName').textContent =
+                titleEl?.textContent || '상품';
+
+            // 선택 초기화
+            ['btnSelling','btnReserved','btnSold'].forEach(id => {
+                const btn = document.getElementById(id);
+                btn.classList.remove('selected','selected-orange','selected-red');
+            });
+            document.getElementById('dealConfirmBtn').className = 'deal-confirm-btn inactive';
+            document.getElementById('dealConfirmBtn').textContent = '변경하기';
+
+            document.getElementById('dealModal').style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        };
+
+        window.closeDealModal = function(e) {
+            if (!e || e.target === document.getElementById('dealModal')) {
+                document.getElementById('dealModal').style.display = 'none';
+                document.body.style.overflow = '';
+                selectedDealStatus = null;
+            }
+        };
+
+        window.selectDealStatus = function(status) {
+            selectedDealStatus = status;
+            // 스타일 리셋
+            document.getElementById('btnSelling').classList.remove('selected','selected-orange','selected-red');
+            document.getElementById('btnReserved').classList.remove('selected','selected-orange','selected-red');
+            document.getElementById('btnSold').classList.remove('selected','selected-orange','selected-red');
+
+            if (status === '판매중')   document.getElementById('btnSelling').classList.add('selected');
+            if (status === '예약중')   document.getElementById('btnReserved').classList.add('selected-orange');
+            if (status === '판매완료') document.getElementById('btnSold').classList.add('selected-red');
+
+            const confirmBtn = document.getElementById('dealConfirmBtn');
+            confirmBtn.className = 'deal-confirm-btn active';
+            confirmBtn.textContent = `"${status}"(으)로 변경하기`;
+        };
+
+        window.confirmDealStatus = async function() {
+            if (!selectedDealStatus) return;
+            const confirmBtn = document.getElementById('dealConfirmBtn');
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = '변경 중...';
+
+            try {
+                // products/{id} 상태 변경
+                await updateDoc(doc(db, 'products', chatData.productId), {
+                    status: selectedDealStatus
+                });
+
+                // 채팅방에 시스템 메시지 전송
+                const statusEmoji = selectedDealStatus === '판매완료' ? '🔴' : selectedDealStatus === '예약중' ? '🟠' : '🟢';
+                await addDoc(collection(db, 'chats', chatId, 'messages'), {
+                    type: 'system',
+                    text: `${statusEmoji} 거래 상태가 "${selectedDealStatus}"(으)로 변경되었습니다`,
+                    senderId: currentUser.uid,
+                    timestamp: serverTimestamp()
+                });
+
+                // 버튼 라벨 업데이트
+                updateDealBtnLabel(selectedDealStatus);
+
+                // 모달 닫기
+                document.getElementById('dealModal').style.display = 'none';
+                document.body.style.overflow = '';
+                selectedDealStatus = null;
+
+                // 토스트
+                showDealToast(`거래 상태가 변경되었습니다`);
+
+            } catch (error) {
+                console.error('거래 상태 변경 실패:', error);
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = `"${selectedDealStatus}"(으)로 변경하기`;
+                if (error.code === 'permission-denied') {
+                    alert('권한이 없습니다. 판매자 계정으로 로그인했는지 확인해주세요.');
+                } else {
+                    alert('변경에 실패했습니다. 다시 시도해주세요.');
+                }
+            }
+        };
+
+        function showDealToast(msg) {
+            const t = document.createElement('div');
+            t.style.cssText = `
+                position:fixed; bottom:90px; left:50%; transform:translateX(-50%);
+                background:#059669; color:white; padding:12px 22px;
+                border-radius:12px; font-size:14px; font-weight:600;
+                z-index:9999; box-shadow:0 4px 14px rgba(5,150,105,0.4);
+                font-family:'Noto Sans KR',sans-serif;
+            `;
+            t.innerHTML = `<i class="fas fa-check-circle" style="margin-right:8px"></i>${msg}`;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 2500);
+        }
 
         window.muteChat = function() {
             alert('알림이 꺼졌습니다.');
