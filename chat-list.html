@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>채팅 목록 - PlantiaWorld</title>
+    <!-- ✅ PWA 설정 -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#10b981">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="플랜티아월드">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <!-- ✅ PWA 설정 끝 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body { background-color: #f1f5f9; }
+
+        /* 채팅방 카드 호버 */
+        .chat-item {
+            transition: background 0.15s;
+        }
+        .chat-item:hover {
+            background-color: #f0fdf4;
+        }
+        .chat-item:active {
+            background-color: #dcfce7;
+        }
+
+        /* 안 읽은 뱃지 */
+        .unread-badge {
+            min-width: 20px;
+            height: 20px;
+            padding: 0 6px;
+            border-radius: 10px;
+            background: #10b981;
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        /* 스켈레톤 로딩 */
+        .skeleton {
+            background: linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.4s infinite;
+            border-radius: 8px;
+        }
+        @keyframes shimmer {
+            0%   { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* 빈 상태 */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 80px 24px;
+            text-align: center;
+        }
+        .empty-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.6;
+        }
+
+        /* 검색창 */
+        #searchInput:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(16,185,129,0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ===== 헤더 ===== -->
+    <header class="bg-white border-b border-gray-100 px-4 py-3 flex items-center sticky top-0 z-10">
+        <button onclick="history.back()" class="mr-3 text-gray-500 hover:text-gray-700">
+            <i class="fas fa-chevron-left text-xl"></i>
+        </button>
+        <h1 class="flex-1 text-lg font-bold text-gray-800">채팅 목록</h1>
+        <span id="chatCount" class="text-sm text-gray-400"></span>
+    </header>
+
+    <!-- ===== 검색창 ===== -->
+    <div class="bg-white px-4 py-3 border-b border-gray-100">
+        <div class="relative">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="이름, 상품명으로 검색"
+                class="w-full pl-9 pr-4 py-2.5 bg-gray-100 rounded-xl text-sm border border-transparent transition"
+            >
+        </div>
+    </div>
+
+    <!-- ===== 채팅 목록 ===== -->
+    <div id="chatList" class="divide-y divide-gray-100 bg-white mt-2 rounded-xl mx-2 overflow-hidden shadow-sm">
+        <!-- 스켈레톤 로딩 (JS로 제거됨) -->
+        <div id="loadingState" class="p-4 space-y-4">
+            <div class="flex items-center gap-3">
+                <div class="skeleton w-14 h-14 rounded-full flex-shrink-0"></div>
+                <div class="flex-1 space-y-2">
+                    <div class="skeleton h-4 w-1/3"></div>
+                    <div class="skeleton h-3 w-2/3"></div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="skeleton w-14 h-14 rounded-full flex-shrink-0"></div>
+                <div class="flex-1 space-y-2">
+                    <div class="skeleton h-4 w-1/4"></div>
+                    <div class="skeleton h-3 w-1/2"></div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="skeleton w-14 h-14 rounded-full flex-shrink-0"></div>
+                <div class="flex-1 space-y-2">
+                    <div class="skeleton h-4 w-2/5"></div>
+                    <div class="skeleton h-3 w-3/5"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 빈 상태 (채팅 없을 때) -->
+    <div id="emptyState" class="hidden empty-state">
+        <div class="empty-icon">💬</div>
+        <h2 class="text-lg font-bold text-gray-700 mb-2">채팅이 없습니다</h2>
+        <p class="text-sm text-gray-500 mb-6">관심 있는 상품에 채팅을 시작해보세요!</p>
+        <button onclick="window.location.href='index.html'"
+                class="bg-green-600 text-white px-6 py-3 rounded-xl font-bold text-sm hover:bg-green-700 transition">
+            <i class="fas fa-leaf mr-2"></i>상품 둘러보기
+        </button>
+    </div>
+
+    <!-- Firebase v10 모듈 방식 스크립트 -->
+    <script type="module" src="chat-list.js"></script>
+
+    <!-- ✅ PWA Service Worker 등록 -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('✅ SW 등록 완료:', reg.scope))
+                    .catch(err => console.warn('❌ SW 등록 실패:', err));
+            });
+        }
+    </script>
+</body>
+</html>
