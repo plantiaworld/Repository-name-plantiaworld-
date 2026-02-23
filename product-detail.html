@@ -641,13 +641,12 @@
             }
             
             try {
-                // 기존 채팅방 확인
+                // 기존 채팅방 확인 (복합 인덱스 불필요한 2개 조건으로 단순화)
                 const chatsRef = collection(db, 'chats');
                 const q = query(
                     chatsRef,
                     where('productId', '==', productId),
-                    where('buyerId', '==', currentUser.uid),
-                    where('sellerId', '==', currentProduct.sellerId)
+                    where('buyerId', '==', currentUser.uid)
                 );
                 
                 const existingChats = await getDocs(q);
@@ -684,7 +683,11 @@
                 }
             } catch (error) {
                 console.error('❌ 채팅 시작 오류:', error);
-                alert('채팅을 시작할 수 없습니다.');
+                if (error.code === 'permission-denied') {
+                    alert('권한이 없습니다. 로그인 상태를 확인해주세요.');
+                } else {
+                    alert('채팅을 시작할 수 없습니다: ' + error.message);
+                }
             }
         };
 
