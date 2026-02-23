@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>이용약관 - PlantiaWorld</title>
+    <!-- ✅ PWA 설정 -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#10b981">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="플랜티아월드">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <!-- ✅ PWA 설정 끝 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
@@ -512,7 +521,7 @@
             <div class="contact-card">
                 <div class="contact-row">
                     <i class="fas fa-envelope"></i>
-                    <strong>문의 이메일</strong> support@plantiaworld.com
+                    <strong>문의 이메일</strong> <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="71020401011e030531011d101f051810061e031d155f121e1c">[email&#160;protected]</a>
                 </div>
                 <div class="contact-row">
                     <i class="fas fa-clock"></i>
@@ -520,12 +529,16 @@
                 </div>
                 <div class="contact-row">
                     <i class="fas fa-calendar"></i>
-                    <strong>시행일</strong> 2025년 1월 1일
-                </div>
-            </div>
-        </div>
-
-    </div>
-
+                    <str
+    <!-- ✅ PWA Service Worker 등록 -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('✅ SW 등록 완료:', reg.scope))
+                    .catch(err => console.warn('❌ SW 등록 실패:', err));
+            });
+        }
+    </script>
 </body>
 </html>

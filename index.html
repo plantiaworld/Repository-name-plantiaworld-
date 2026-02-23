@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PlantiaWorld - 이웃과 식물을 나누는 공간</title>
     <meta name="description" content="이웃과 함께하는 동네 식물 나눔 커뮤니티">
+
+    <!-- ✅ PWA 설정 -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#10b981">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="플랜티아월드">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <!-- ✅ PWA 설정 끝 -->
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -1675,6 +1686,50 @@
             </div>
         </div>
     </div>
+
+    <!-- ✅ PWA Service Worker 등록 -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('✅ Service Worker 등록 성공:', reg.scope))
+                    .catch(err => console.warn('❌ Service Worker 등록 실패:', err));
+            });
+        }
+
+        // ✅ 앱 설치 배너 (홈 화면에 추가 안내)
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+
+            const installBtn = document.getElementById('installAppBtn');
+            if (installBtn) {
+                installBtn.classList.remove('hidden');
+                installBtn.addEventListener('click', () => {
+                    deferredPrompt.prompt();
+                    deferredPrompt.userChoice.then(choice => {
+                        if (choice.outcome === 'accepted') {
+                            console.log('✅ 앱 설치 완료');
+                        }
+                        deferredPrompt = null;
+                    });
+                });
+            } else {
+                // 설치 버튼이 없으면 3초 후 토스트 안내
+                setTimeout(() => {
+                    if (typeof showToast === 'function') {
+                        showToast('📱 홈 화면에 추가하면 앱처럼 사용할 수 있어요!', 'success');
+                    }
+                }, 3000);
+            }
+        });
+
+        window.addEventListener('appinstalled', () => {
+            console.log('✅ PlantiaWorld 앱 설치 완료!');
+            deferredPrompt = null;
+        });
+    </script>
 
 </body>
 </html>

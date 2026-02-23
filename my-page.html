@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>마이페이지 - PlantiaWorld</title>
+    <!-- ✅ PWA 설정 -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#10b981">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="플랜티아월드">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <!-- ✅ PWA 설정 끝 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- ✅ BUG FIX #2: Leaflet 지도 라이브러리 (주소 → 지도 자동 이동) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -1495,5 +1504,16 @@
     <!-- 숨겨진 프로필 이미지 (헤더용) 
 -->
 
+
+    <!-- ✅ PWA Service Worker 등록 -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('✅ SW 등록 완료:', reg.scope))
+                    .catch(err => console.warn('❌ SW 등록 실패:', err));
+            });
+        }
+    </script>
 </body>
 </html>

@@ -6,15 +6,35 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "headers": [
+      {
+        "source": "/sw.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+          { "key": "Service-Worker-Allowed", "value": "/" }
+        ]
+      },
+      {
+        "source": "/manifest.json",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" },
+          { "key": "Content-Type", "value": "application/manifest+json" }
+        ]
+      },
+      {
+        "source": "/icons/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=86400" }
+        ]
+      },
+      {
+        "source": "**/*.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" }
+        ]
+      }
+    ],
     "rewrites": [
-      {
-        "source": "/edit-product",
-        "destination": "/add-product.html"
-      },
-      {
-        "source": "/edit-product.html",
-        "destination": "/add-product.html"
-      },
       {
         "source": "/admin",
         "destination": "/admin.html"

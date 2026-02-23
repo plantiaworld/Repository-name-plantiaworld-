@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>고객센터 - PlantiaWorld</title>
+    <!-- ✅ PWA 설정 -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#10b981">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="플랜티아월드">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <!-- ✅ PWA 설정 끝 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
@@ -381,7 +390,7 @@
                     <i class="fas fa-envelope"></i>
                 </div>
                 <h3>이메일 문의</h3>
-                <p>support@plantiaworld.com<br>영업일 기준 3일 이내 답변</p>
+                <p><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="3e4d4b4e4e514c4a7e4e525f504a575f49514c525a105d5153">[email&#160;protected]</a><br>영업일 기준 3일 이내 답변</p>
             </div>
             <div class="channel-card">
                 <div class="channel-icon blue">
@@ -540,7 +549,7 @@
             <div class="success-screen" id="successScreen">
                 <div class="check">✓</div>
                 <h3>문의가 접수되었습니다!</h3>
-                <p>입력하신 이메일로 영업일 기준 3일 이내에 답변 드리겠습니다.<br>추가 문의사항은 support@plantiaworld.com으로 연락주세요.</p>
+                <p>입력하신 이메일로 영업일 기준 3일 이내에 답변 드리겠습니다.<br>추가 문의사항은 <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="99eaece9e9f6ebedd9e9f5f8f7edf0f8eef6ebf5fdb7faf6f4">[email&#160;protected]</a>으로 연락주세요.</p>
                 <button class="back-to-form-btn" onclick="resetForm()">
                     <i class="fas fa-redo" style="margin-right:6px;"></i>새 문의 접수
                 </button>
@@ -555,7 +564,7 @@
         <span id="toastMsg"></span>
     </div>
 
-    <script type="module">
+    <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
@@ -651,13 +660,16 @@
             document.getElementById('inp-title').value = '';
             document.getElementById('inp-content').value = '';
             document.getElementById('charCount').textContent = '0';
-            document.getElementById('successScreen').style.display = 'none';
-            document.getElementById('inquiryForm').style.display = 'block';
-            const btn = document.getElementById('submitBtn');
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-paper-plane" style="margin-right:8px;"></i>문의 접수하기';
-        };
+            document.getElementById('suc
+    <!-- ✅ PWA Service Worker 등록 -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('✅ SW 등록 완료:', reg.scope))
+                    .catch(err => console.warn('❌ SW 등록 실패:', err));
+            });
+        }
     </script>
-
 </body>
 </html>
