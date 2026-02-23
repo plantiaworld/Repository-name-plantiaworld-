@@ -529,7 +529,8 @@
                 '관엽식물': '관엽식물',
                 '다육식물': '다육식물',
                 '화분/용품': '화분/용품',
-                '정보공유': '정보공유'
+                '정보공유': '정보공유',
+                '기타식물': '기타식물'
             };
             
             document.getElementById('sectionTitle').textContent = titles[category] || '최신 식물';
@@ -1097,6 +1098,7 @@
         .category-card {
             cursor: pointer;
             transition: all 0.3s ease;
+            position: relative;
         }
         
         .category-card:hover {
@@ -1107,19 +1109,22 @@
         .category-card.active-category {
             background: linear-gradient(135deg, #10b981 0%, #059669 100%);
             color: white;
-            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+            box-shadow: 0 8px 24px rgba(16, 185, 129, 0.45);
+            transform: translateY(-4px) scale(1.04);
         }
         
         .category-card.active-category i {
-            color: white;
+            color: #10b981 !important;
         }
         
         .category-card.active-category h3 {
-            color: white;
+            color: white !important;
+            font-weight: 800;
         }
         
-        .category-card.active-category .bg-green-50 {
-            background-color: rgba(255, 255, 255, 0.2);
+        /* 모든 아이콘 배경 일괄 처리 */
+        .category-card.active-category [class*="bg-"] {
+            background-color: rgba(255, 255, 255, 0.95) !important;
         }
         
         .hidden { 
@@ -1278,7 +1283,7 @@
             
             /* 모바일에서 카테고리 그리드 조정 */
             .category-grid {
-                grid-template-columns: repeat(5, 1fr);
+                grid-template-columns: repeat(6, 1fr);
                 gap: 0.5rem;
             }
             
@@ -1404,7 +1409,7 @@
             <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
                 <span class="w-1 h-6 bg-green-500 rounded-full mr-2"></span>카테고리
             </h2>
-            <div class="category-grid grid grid-cols-5 gap-3">
+            <div class="category-grid grid grid-cols-6 gap-3">
                 <div class="category-card active-category bg-white rounded-2xl p-4 text-center shadow-sm" onclick="filterProducts('all', event)">
                     <div class="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-2">
                         <i class="fas fa-th text-green-600 text-lg"></i>
@@ -1428,6 +1433,12 @@
                         <i class="fas fa-tint text-green-600 text-lg"></i>
                     </div>
                     <h3 class="font-bold text-gray-800 text-xs">화분/용품</h3>
+                </div>
+                <div class="category-card bg-white rounded-2xl p-4 text-center shadow-sm" onclick="filterProducts('기타식물', event)">
+                    <div class="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <i class="fas fa-leaf text-green-600 text-lg"></i>
+                    </div>
+                    <h3 class="font-bold text-gray-800 text-xs">기타식물</h3>
                 </div>
                 <div class="category-card bg-white rounded-2xl p-4 text-center shadow-sm" onclick="filterProducts('정보공유', event)">
                     <div class="w-12 h-12 bg-yellow-50 rounded-full flex items-center justify-center mx-auto mb-2">
