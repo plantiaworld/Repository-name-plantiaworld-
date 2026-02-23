@@ -358,7 +358,10 @@
             getDoc, 
             updateDoc, 
             deleteDoc,
-            serverTimestamp 
+            serverTimestamp,
+            query,
+            where,
+            getDocs
         } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
         import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-storage.js";
@@ -812,6 +815,23 @@
                         productData.sellerLocation = sellerGeoLocation;
                     }
                     await updateDoc(doc(db, 'products', productId), productData);
+
+                    // ✅ 채팅방 productTitle / productImage 동기화
+                    try {
+                        const chatsSnap = await getDocs(
+                            query(collection(db, 'chats'), where('productId', '==', productId))
+                        );
+                        const syncPromises = chatsSnap.docs.map(chatDoc =>
+                            updateDoc(chatDoc.ref, {
+                                productTitle: title,
+                                productImage: finalImages[0] || null
+                            })
+                        );
+                        await Promise.all(syncPromises);
+                        console.log(`✅ 채팅방 ${chatsSnap.size}개 상품 정보 동기화 완료`);
+                    } catch (syncErr) {
+                        console.warn('⚠️ 채팅 동기화 실패 (무시):', syncErr);
+                    }
                     
                     showToast("🌱 상품이 성공적으로 수정되었습니다!");
                     

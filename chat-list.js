@@ -65,13 +65,18 @@ async function loadChatList(uid) {
         const buyerSnap  = await getDocs(query(chatsRef, where('buyerId',  '==', uid)));
         console.log('📦 구매자 채팅 수:', buyerSnap.size);
 
-        // 중복 제거 합산
+        // 중복 제거 합산 + 나간 채팅방 제외
         const seen   = new Set();
         const merged = [];
         [...sellerSnap.docs, ...buyerSnap.docs].forEach(d => {
             if (!seen.has(d.id)) {
                 seen.add(d.id);
-                merged.push({ id: d.id, ...d.data() });
+                const data = d.data();
+                // leftBy 배열에 내 uid가 있으면 제외 (채팅방 나가기)
+                const leftBy = data.leftBy || [];
+                if (!leftBy.includes(uid)) {
+                    merged.push({ id: d.id, ...data });
+                }
             }
         });
 
