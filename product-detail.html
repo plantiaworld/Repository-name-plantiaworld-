@@ -641,18 +641,19 @@
             }
             
             try {
-                // 기존 채팅방 확인 (복합 인덱스 불필요한 2개 조건으로 단순화)
+                // 기존 채팅방 확인 (단일 조건 쿼리 → 복합 인덱스 불필요)
+                // buyerId 1개 조건으로 가져온 뒤 JS에서 productId 필터링
                 const chatsRef = collection(db, 'chats');
                 const q = query(
                     chatsRef,
-                    where('productId', '==', productId),
                     where('buyerId', '==', currentUser.uid)
                 );
                 
-                const existingChats = await getDocs(q);
+                const snap = await getDocs(q);
+                const existingChat = snap.docs.find(d => d.data().productId === productId);
                 
-                if (!existingChats.empty) {
-                    const chatId = existingChats.docs[0].id;
+                if (existingChat) {
+                    const chatId = existingChat.id;
                     window.location.href = `chat-room.html?id=${chatId}`;
                 } else {
                     // 새 채팅방 생성
