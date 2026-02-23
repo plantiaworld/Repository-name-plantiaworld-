@@ -8,7 +8,6 @@ import {
     collection,
     query,
     where,
-    orderBy,
     onSnapshot,
     doc,
     getDoc,
@@ -31,27 +30,32 @@ const firebaseConfig = {
     measurementId: "G-8XSSM279KY",
 };
 
-const app = initializeApp(firebaseConfig);
-const db  = getFirestore(app);
+const app  = initializeApp(firebaseConfig);
+const db   = getFirestore(app);
 const auth = getAuth(app);
 
 // ============================================
 // 전역
 // ============================================
 let currentUser = null;
-let unsubscribeChats = null;
+let unsubSeller = null;
+let unsubBuyer  = null;
 
-// 채팅 데이터 캐시 (검색용)
+// 판매자/구매자 채팅 각각 캐시 (index.html과 동일한 방식)
+let sellerChats = [];
+let buyerChats  = [];
+
+// 검색용 전체 목록 캐시
 let allChats = [];
 
 // ============================================
-// 인증 감지 → 채팅 목록 로드
+// 인증 감지
 // ============================================
 onAuthStateChanged(auth, (user) => {
     if (user) {
         currentUser = user;
         console.log('✅ 로그인:', user.uid);
-        loadChatList();
+        loadChatList(user.uid);
         setupSearch();
     } else {
         console.log('❌ 로그인 필요');
@@ -60,101 +64,76 @@ onAuthStateChanged(auth, (user) => {
 });
 
 // ============================================
-// 채팅 목록 실시간 수신
+// 채팅 목록 로드 (index.html과 동일: sellerId + buyerId 두 쿼리)
 // ============================================
-function loadChatList() {
-    // participants 배열에 현재 uid가 포함된 채팅방 쿼리
+function loadChatList(uid) {
     const chatsRef = collection(db, 'chats');
-    const q = query(
-        chatsRef,
-        where('participants', 'array-contains', currentUser.uid),
-        orderBy('updatedAt', 'desc')
-    );
 
-    unsubscribeChats = onSnapshot(q, async (snapshot) => {
-        // 스켈레톤 숨기기
-        document.getElementById('loadingState').style.display = 'none';
+    // --- 판매자로 참여한 채팅 ---
+    const qSeller = query(chatsRef, where('sellerId', '==', uid));
+    unsubSeller = onSnapshot(qSeller, async (snap) => {
+        sellerChats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        await mergeAndRender(uid);
+    }, (err) => {
+        console.error('❌ 판매자 채팅 구독 오류:', err);
+    });
 
-        if (snapshot.empty) {
-            showEmpty();
-            return;
-        }
-
-        document.getElementById('emptyState').classList.add('hidden');
-        document.getElementById('chatCount').textContent = `${snapshot.docs.length}개`;
-
-        // 각 채팅방 정보 병렬 fetch
-        const chatItems = await Promise.all(
-            snapshot.docs.map(chatDoc => buildChatItem(chatDoc))
-        );
-
-        // 캐시 저장 (검색용)
-        allChats = chatItems.filter(Boolean);
-
-        // 렌더링
-        renderList(allChats);
-
-    }, (error) => {
-        console.error('❌ 채팅 목록 수신 실패:', error);
-        document.getElementById('loadingState').style.display = 'none';
-
-        // participants 필드가 없는 구형 데이터 → fallback 쿼리
-        if (error.code === 'failed-precondition' || error.code === 'invalid-argument') {
-            loadChatListFallback();
-        } else {
-            showEmpty('채팅 목록을 불러오는 데 실패했습니다.');
-        }
+    // --- 구매자로 참여한 채팅 ---
+    const qBuyer = query(chatsRef, where('buyerId', '==', uid));
+    unsubBuyer = onSnapshot(qBuyer, async (snap) => {
+        buyerChats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        await mergeAndRender(uid);
+    }, (err) => {
+        console.error('❌ 구매자 채팅 구독 오류:', err);
     });
 }
 
 // ============================================
-// Fallback: 구형 buyerId/sellerId 방식
+// 두 목록 합산 → 렌더링
 // ============================================
-async function loadChatListFallback() {
-    console.log('⚠️ fallback 쿼리 사용 (buyerId/sellerId)');
-    const chatsRef = collection(db, 'chats');
+async function mergeAndRender(uid) {
+    // 스켈레톤 숨기기
+    document.getElementById('loadingState').style.display = 'none';
 
-    // 구매자로 참여한 채팅
-    const buyerQ   = query(chatsRef, where('buyerId',  '==', currentUser.uid), orderBy('updatedAt', 'desc'));
-    // 판매자로 참여한 채팅
-    const sellerQ  = query(chatsRef, where('sellerId', '==', currentUser.uid), orderBy('updatedAt', 'desc'));
+    // 중복 제거
+    const seen = new Set();
+    const merged = [...sellerChats, ...buyerChats].filter(c => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+    });
 
-    let merged = {};
+    if (merged.length === 0) {
+        showEmpty();
+        return;
+    }
 
-    const handle = async (snapshot) => {
-        await Promise.all(snapshot.docs.map(async (chatDoc) => {
-            if (!merged[chatDoc.id]) {
-                const item = await buildChatItem(chatDoc);
-                if (item) merged[chatDoc.id] = item;
-            }
-        }));
-        // updatedAt 내림차순 정렬
-        allChats = Object.values(merged).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-        if (allChats.length === 0) {
-            showEmpty();
-        } else {
-            document.getElementById('emptyState').classList.add('hidden');
-            document.getElementById('chatCount').textContent = `${allChats.length}개`;
-            renderList(allChats);
-        }
-    };
+    // 최신 메시지 순 정렬
+    merged.sort((a, b) => {
+        const aT = a.lastMessageTime?.seconds || a.updatedAt?.seconds || 0;
+        const bT = b.lastMessageTime?.seconds || b.updatedAt?.seconds || 0;
+        return bT - aT;
+    });
 
-    onSnapshot(buyerQ,  handle, console.error);
-    onSnapshot(sellerQ, handle, console.error);
+    // 상대방 정보 병렬 fetch
+    const items = await Promise.all(merged.map(chat => buildChatItem(chat, uid)));
+    allChats = items.filter(Boolean);
+
+    document.getElementById('emptyState').classList.add('hidden');
+    document.getElementById('chatCount').textContent = `${allChats.length}개`;
+
+    renderList(allChats);
 }
 
 // ============================================
 // 채팅방 아이템 데이터 조립
 // ============================================
-async function buildChatItem(chatDoc) {
+async function buildChatItem(chatData, uid) {
     try {
-        const chatData = chatDoc.data();
-        const chatId   = chatDoc.id;
+        const chatId = chatData.id;
 
-        // 상대방 uid 계산
-        const participants = chatData.participants ||
-            [chatData.buyerId, chatData.sellerId].filter(Boolean);
-        const otherUid = participants.find(id => id !== currentUser.uid);
+        // 상대방 uid
+        const otherUid = chatData.sellerId === uid ? chatData.buyerId : chatData.sellerId;
 
         // 상대방 정보 fetch
         let otherName  = '알 수 없는 사용자';
@@ -168,30 +147,30 @@ async function buildChatItem(chatDoc) {
                     otherName  = u.displayName || u.username || u.nickname || u.email || otherName;
                     otherPhoto = u.profileImage || u.photoURL || otherPhoto;
                 }
-            } catch (_) { /* 조용히 fallback */ }
+            } catch (_) {}
         }
 
-        // 상품 정보 fetch
-        let productTitle = '';
-        let productThumb = '';
+        // 상품 정보 (chatData에 이미 있으면 재사용, 없으면 fetch)
+        let productTitle = chatData.productTitle || '';
+        let productThumb = chatData.productImage || '';
 
-        if (chatData.productId) {
+        if (!productTitle && chatData.productId) {
             try {
                 const pSnap = await getDoc(doc(db, 'products', chatData.productId));
                 if (pSnap.exists()) {
                     const p = pSnap.data();
-                    productTitle = p.title || '';
+                    productTitle = p.title      || '';
                     productThumb = p.images?.[0] || '';
                 }
-            } catch (_) { /* 조용히 fallback */ }
+            } catch (_) {}
         }
 
         // 읽지 않은 메시지 수
-        const unread = chatData.unreadCount?.[currentUser.uid] || 0;
+        const unread = chatData.unreadCount?.[uid] || 0;
 
-        // 마지막 메시지 시간
-        const lastTime   = chatData.lastMessageTime || chatData.updatedAt || null;
-        const updatedAtMs = lastTime?.toMillis?.() || 0;
+        // 시간
+        const lastTime    = chatData.lastMessageTime || chatData.updatedAt || null;
+        const updatedAtMs = lastTime?.toMillis?.() || (lastTime?.seconds ? lastTime.seconds * 1000 : 0);
 
         return {
             chatId,
@@ -216,7 +195,7 @@ async function buildChatItem(chatDoc) {
 function renderList(items) {
     const container = document.getElementById('chatList');
 
-    // 스켈레톤/기존 아이템 제거 (loadingState 제외하고 나머지 제거)
+    // 기존 카드 제거 (loadingState 제외)
     Array.from(container.children).forEach(child => {
         if (child.id !== 'loadingState') child.remove();
     });
@@ -226,9 +205,9 @@ function renderList(items) {
         return;
     }
 
+    document.getElementById('emptyState').classList.add('hidden');
     items.forEach(item => {
-        const el = createChatElement(item);
-        container.appendChild(el);
+        container.appendChild(createChatElement(item));
     });
 }
 
@@ -238,11 +217,9 @@ function renderList(items) {
 function createChatElement(item) {
     const div = document.createElement('div');
     div.className = 'chat-item flex items-center gap-3 px-4 py-4 cursor-pointer';
-    div.setAttribute('data-chat-id',   item.chatId);
     div.setAttribute('data-search-key', `${item.otherName} ${item.productTitle}`.toLowerCase());
 
     div.innerHTML = `
-        <!-- 상대방 프로필 사진 -->
         <div class="relative flex-shrink-0">
             <img
                 src="${escapeHtml(item.otherPhoto)}"
@@ -259,7 +236,6 @@ function createChatElement(item) {
             >` : ''}
         </div>
 
-        <!-- 텍스트 영역 -->
         <div class="flex-1 min-w-0">
             <div class="flex items-baseline justify-between mb-0.5">
                 <span class="font-bold text-gray-800 text-sm truncate">${escapeHtml(item.otherName)}</span>
@@ -270,14 +246,13 @@ function createChatElement(item) {
                 <i class="fas fa-leaf mr-1"></i>${escapeHtml(item.productTitle)}
             </p>` : ''}
             <div class="flex items-center justify-between gap-2">
-                <p class="text-xs text-gray-500 truncate">${escapeHtml(item.lastMessage) || '<em class="text-gray-400">메시지 없음</em>'}</p>
+                <p class="text-xs text-gray-500 truncate">${item.lastMessage ? escapeHtml(item.lastMessage) : '<em class="text-gray-400">메시지 없음</em>'}</p>
                 ${item.unread > 0 ? `
                 <span class="unread-badge">${item.unread > 99 ? '99+' : item.unread}</span>` : ''}
             </div>
         </div>
     `;
 
-    // 클릭 → 채팅방으로 이동
     div.addEventListener('click', () => {
         window.location.href = `chat-room.html?id=${item.chatId}`;
     });
@@ -286,7 +261,7 @@ function createChatElement(item) {
 }
 
 // ============================================
-// 검색 기능
+// 검색
 // ============================================
 function setupSearch() {
     const input = document.getElementById('searchInput');
@@ -296,10 +271,9 @@ function setupSearch() {
             renderList(allChats);
             return;
         }
-        const filtered = allChats.filter(item =>
+        renderList(allChats.filter(item =>
             `${item.otherName} ${item.productTitle}`.toLowerCase().includes(keyword)
-        );
-        renderList(filtered);
+        ));
     });
 }
 
@@ -307,18 +281,16 @@ function setupSearch() {
 // 유틸
 // ============================================
 function showEmpty(msg) {
-    const emptyEl = document.getElementById('emptyState');
-    emptyEl.classList.remove('hidden');
-    if (msg) {
-        emptyEl.querySelector('p').textContent = msg;
-    }
+    const el = document.getElementById('emptyState');
+    el.classList.remove('hidden');
+    if (msg) el.querySelector('p').textContent = msg;
     document.getElementById('chatCount').textContent = '';
 }
 
 function formatTime(timestamp) {
     if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    const now  = new Date();
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
+    const now   = new Date();
     const diffMs  = now - date;
     const diffMin = Math.floor(diffMs / 60000);
     const diffH   = Math.floor(diffMs / 3600000);
@@ -328,8 +300,6 @@ function formatTime(timestamp) {
     if (diffMin < 60) return `${diffMin}분 전`;
     if (diffH   < 24) return `${diffH}시간 전`;
     if (diffD   < 7)  return `${diffD}일 전`;
-
-    // 7일 이상: 날짜 표시
     return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
@@ -348,5 +318,6 @@ function getDefaultAvatar() {
 
 // 페이지 언로드 시 구독 해제
 window.addEventListener('beforeunload', () => {
-    if (unsubscribeChats) unsubscribeChats();
+    if (unsubSeller) unsubSeller();
+    if (unsubBuyer)  unsubBuyer();
 });
