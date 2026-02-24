@@ -47,7 +47,10 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isLoggedIn();
       allow create: if isOwner(userId);
+
+      // ✅ fcmTokens, notificationEnabled 포함 업데이트 허용
       allow update: if isOwner(userId) || isAdmin();
+
       allow delete: if isOwner(userId);
     }
 
@@ -83,7 +86,6 @@ service cloud.firestore {
           && resource.data.senderId == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys()
               .hasOnly(['deleted', 'deletedAt', 'text', 'imageUrl']);
-        // 하드 삭제는 미사용 (소프트 삭제 방식 채택)
         allow delete: if false;
       }
     }

@@ -254,6 +254,21 @@
             uploadBytesResumable, 
             getDownloadURL 
         } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-storage.js";
+        import {
+            getMessaging,
+            getToken,
+            onMessage,
+        } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-messaging.js";
+
+        // ──────────────────────────────────────────────────────────
+        // ⚠️ VAPID 키 설정 (Firebase Console에서 발급)
+        //   경로: 프로젝트 설정 → 클라우드 메시징 → 웹 구성
+        //         → 웹 푸시 인증서 → "키 쌍 생성" 버튼 클릭
+        //         → 생성된 키 전체 복사해서 아래에 붙여넣기
+        const VAPID_KEY = 'BCzKbFzkoRHIX1qWuBOlZtTNDqm4DOnSW7OEiRfD2MnAcigf7HXHQkdZJpXpUnETP0t8azfP4UYwqEhqDM1pTDg';
+        // ✅ 서버 키(레거시)는 2024년 7월 이후 사용 불가.
+        //    알림 발송은 Cloud Functions(functions/index.js)가 자동 처리합니다.
+        // ──────────────────────────────────────────────────────────
 
         // ============================================
         // Firebase 설정 및 초기화
@@ -272,6 +287,14 @@
         const db = getFirestore(app);
         const auth = getAuth(app);
         const storage = getStorage(app);
+
+        // Firebase Messaging (알림용) – 지원 환경에서만 초기화
+        let messaging = null;
+        try {
+            messaging = getMessaging(app);
+        } catch (e) {
+            console.warn('⚠️ Firebase Messaging 초기화 실패 (HTTPS 필요):', e.message);
+        }
 
         // 오프라인 지속성 활성화 (v10 방식)
         try {
@@ -313,19 +336,16 @@
             if (user) {
                 currentUser = user;
                 console.log('✅ 로그인된 사용자:', user.uid);
-                console.log('📧 이메일:', user.email);
-                console.log('👤 닉네임:', user.displayName);
                 
                 try {
-                    // 채팅방 정보 로드 (상품 정보도 함께 로드됨)
                     await loadChatRoom();
-                    
-                    // 메시지 실시간 수신 시작
                     listenToMessages();
-                    
-                    // 이벤트 리스너 설정
                     setupEventListeners();
-                    
+
+                    // ─── ✅ FCM 토큰 등록 & 포그라운드 알림 ──────
+                    setupNotifications(user.uid);
+                    // ──────────────────────────────────────────────
+
                     console.log('✅ 채팅방 초기화 완료');
                 } catch (error) {
                     console.error('❌ 초기화 실패:', error);
@@ -338,6 +358,86 @@
                 window.location.href = 'login.html';
             }
         });
+
+        // ============================================
+        // 0. FCM 토큰 등록 & 포그라운드 알림 수신 설정
+        // ============================================
+        async function setupNotifications(uid) {
+            if (!messaging) return;
+            if (!('Notification' in window)) return;
+
+            try {
+                // 알림 권한 요청 (이미 granted면 재요청 안 함)
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') return;
+
+                if (VAPID_KEY === 'YOUR_VAPID_KEY_HERE') return; // 키 미설정 스킵
+
+                // FCM 토큰 발급 & 저장
+                const token = await getToken(messaging, { vapidKey: VAPID_KEY });
+                if (token) {
+                    await updateDoc(doc(db, 'users', uid), {
+                        fcmTokens: arrayUnion(token),
+                        notificationEnabled: true,
+                    }).catch(() => {});
+                    console.log('✅ FCM 토큰 저장 완료');
+                }
+
+                // 포그라운드 메시지 수신 (앱이 열려 있을 때)
+                onMessage(messaging, (payload) => {
+                    // 현재 채팅방의 메시지면 토스트 생략 (onSnapshot이 처리)
+                    const payloadChatId = payload.data?.chatId || '';
+                    if (payloadChatId === chatId) return;
+
+                    const title = payload.notification?.title || '🌿 새 메시지';
+                    const body  = payload.notification?.body  || '';
+                    showChatToast(title, body, payloadChatId);
+                });
+
+            } catch (err) {
+                console.warn('⚠️ 알림 설정 실패 (무시):', err.message);
+            }
+        }
+
+        // ─── 포그라운드 토스트 알림 배너 ───────────────
+        function showChatToast(title, body, targetChatId) {
+            document.querySelectorAll('.chat-notif-toast').forEach(n => n.remove());
+
+            const toast = document.createElement('div');
+            toast.className = 'chat-notif-toast';
+            toast.style.cssText = `
+                position:fixed; top:70px; left:50%; transform:translateX(-50%);
+                background:#fff; border-radius:14px;
+                box-shadow:0 6px 24px rgba(0,0,0,0.14);
+                padding:12px 16px; display:flex; align-items:center; gap:10px;
+                z-index:99999; max-width:340px; width:calc(100vw - 32px);
+                cursor:pointer; border-left:3px solid #10b981;
+                animation: chatToastIn 0.25s ease;
+            `;
+            toast.innerHTML = `
+                <style>
+                    @keyframes chatToastIn {
+                        from { transform:translateX(-50%) translateY(-16px); opacity:0; }
+                        to   { transform:translateX(-50%) translateY(0);     opacity:1; }
+                    }
+                </style>
+                <span style="font-size:22px;flex-shrink:0;">🌿</span>
+                <div style="flex:1;min-width:0;">
+                    <p style="font-size:13px;font-weight:700;color:#111827;margin:0 0 2px;">${escapeHtml(title)}</p>
+                    <p style="font-size:12px;color:#6b7280;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(body)}</p>
+                </div>
+                <button onclick="this.parentElement.remove()"
+                        style="background:none;border:none;color:#9ca3af;font-size:18px;cursor:pointer;flex-shrink:0;">×</button>
+            `;
+            toast.addEventListener('click', (e) => {
+                if (e.target.tagName !== 'BUTTON' && targetChatId) {
+                    window.location.href = `chat-room.html?id=${targetChatId}`;
+                }
+            });
+
+            document.body.appendChild(toast);
+            setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
+        }
 
         // ============================================
         // 2. 채팅방 정보 로드
@@ -636,7 +736,7 @@
                 return;
             }
 
-            // ✅ BUG FIX #2: 전송 중 버튼 비활성화 (중복 전송 방지)
+            // 전송 중 버튼 비활성화 (중복 전송 방지)
             const sendBtn = document.getElementById('sendBtn');
             if (sendBtn) { sendBtn.disabled = true; sendBtn.style.opacity = '0.5'; }
             
@@ -648,12 +748,8 @@
                     type: 'text'
                 };
                 
-                // 텍스트 추가
-                if (text) {
-                    messageData.text = text;
-                }
+                if (text) messageData.text = text;
                 
-                // 이미지 업로드 및 URL 추가
                 if (selectedFile) {
                     console.log('📤 이미지 업로드 중...');
                     const imageUrl = await uploadImage(selectedFile);
@@ -667,7 +763,7 @@
                 await addDoc(messagesRef, messageData);
                 console.log('✅ 메시지 전송 완료');
                 
-                // 채팅방의 lastMessage 및 읽음 상태 업데이트
+                // 채팅방 lastMessage & 읽음 상태 업데이트
                 const chatDocRef = doc(db, 'chats', chatId);
                 const updateData = {
                     lastMessage: text || '사진을 보냈습니다.',
@@ -675,23 +771,24 @@
                     updatedAt: serverTimestamp()
                 };
                 
-                // 상대방의 읽지 않은 메시지 수 증가 (increment로 동시성 문제 방지)
                 if (otherUser && otherUser.id) {
                     updateData[`unreadCount.${otherUser.id}`] = increment(1);
                 }
                 
                 await updateDoc(chatDocRef, updateData);
-                
-                // 입력창 초기화
+
+                // ─── ✅ 푸시 알림은 Cloud Functions가 자동 처리 ──────────
+                //    addDoc(messages) 완료 → Firestore 트리거 발동
+                //    → functions/index.js → FCM V1 API → 상대방 기기
+                // ─────────────────────────────────────────────────────────
+
                 messageInput.value = '';
                 messageInput.style.height = 'auto';
                 clearFilePreview();
-                // ✅ BUG FIX #2: 전송 완료 후 버튼 복구
                 if (sendBtn) { sendBtn.disabled = false; sendBtn.style.opacity = '1'; }
                 
             } catch (error) {
                 console.error('❌ 메시지 전송 실패:', error);
-                // ✅ BUG FIX #2: 실패 시에도 버튼 복구
                 if (sendBtn) { sendBtn.disabled = false; sendBtn.style.opacity = '1'; }
                 
                 if (error.code === 'permission-denied') {
