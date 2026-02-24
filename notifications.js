@@ -128,8 +128,10 @@ export function showInAppNotification({ title, body, chatId, avatarUrl }) {
         animation: notifSlideIn 0.3s ease;
     `;
 
-    const avatar = avatarUrl
-        ? `<img src="${avatarUrl}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">`
+    // ✅ FIX: avatarUrl XSS 방어 - escapeStr로 처리
+    const safeAvatarUrl = avatarUrl ? escapeStr(avatarUrl) : '';
+    const avatar = safeAvatarUrl
+        ? `<img src="${safeAvatarUrl}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">`
         : `<div style="width:40px;height:40px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><span style="font-size:18px;">🌿</span></div>`;
 
     toast.innerHTML = `

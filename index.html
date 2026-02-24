@@ -22,6 +22,8 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+        // ✅ FCM 알림 모듈 (notifications.js)
+        import { initNotifications, listenForegroundMessages, showInAppNotification } from './notifications.js';
         import { 
             getFirestore, 
             collection, 
@@ -135,6 +137,16 @@
             
             if (user) {
                 await loadUserLocation(user.uid);
+                // ✅ FCM 알림 초기화 (로그인 성공 시)
+                initNotifications(user.uid).catch(e => console.warn('알림 초기화 실패(무시):', e));
+                listenForegroundMessages((payload) => {
+                    const chatId = payload.data?.chatId || '';
+                    showInAppNotification({
+                        title: payload.notification?.title || '🌿 새 메시지',
+                        body:  payload.notification?.body  || '',
+                        chatId,
+                    });
+                });
             } else {
                 myLocation = { latitude: 35.1631, longitude: 129.1635, address: '부산 해운대구' };
                 updateLocationUI();

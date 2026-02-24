@@ -58,29 +58,37 @@ service cloud.firestore {
     // ========== chats 컬렉션 ==========
     match /chats/{chatId} {
 
-      allow read: if isLoggedIn() && (
-        resource.data.buyerId  == request.auth.uid ||
-        resource.data.sellerId == request.auth.uid ||
-        isAdmin()
-      );
+      // ✅ 참여자 여부 확인 함수 (buyerId, sellerId, participants 배열 모두 지원)
+      function isChatParticipant() {
+        return resource.data.buyerId  == request.auth.uid ||
+               resource.data.sellerId == request.auth.uid ||
+               (resource.data.keys().hasAny(['participants']) &&
+                request.auth.uid in resource.data.participants);
+      }
+
+      allow read: if isLoggedIn() && (isChatParticipant() || isAdmin());
 
       allow create: if isLoggedIn()
         && request.resource.data.buyerId == request.auth.uid;
 
-      allow update: if isLoggedIn() && (
-        resource.data.buyerId  == request.auth.uid ||
-        resource.data.sellerId == request.auth.uid ||
-        isAdmin()
-      );
+      allow update: if isLoggedIn() && (isChatParticipant() || isAdmin());
 
       allow delete: if false;
 
       // 메시지 서브컬렉션
       match /messages/{messageId} {
-        allow read, create: if isLoggedIn() && (
-          get(/databases/$(database)/documents/chats/$(chatId)).data.buyerId  == request.auth.uid ||
-          get(/databases/$(database)/documents/chats/$(chatId)).data.sellerId == request.auth.uid
-        );
+
+        // ✅ 메시지 권한 확인 함수 (participants 배열 포함)
+        function isMsgParticipant() {
+          let chat = get(/databases/$(database)/documents/chats/$(chatId)).data;
+          return chat.buyerId  == request.auth.uid ||
+                 chat.sellerId == request.auth.uid ||
+                 (chat.keys().hasAny(['participants']) &&
+                  request.auth.uid in chat.participants);
+        }
+
+        allow read, create: if isLoggedIn() && isMsgParticipant();
+
         // ✅ 본인 메시지: deleted 플래그 소프트 삭제 허용
         allow update: if isLoggedIn()
           && resource.data.senderId == request.auth.uid

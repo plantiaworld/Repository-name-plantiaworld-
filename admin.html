@@ -924,12 +924,17 @@
     window.openReportModal = function(id) {
         const r = allReports.find(r => r.id === id);
         if (!r) return;
-        document.getElementById('modal-reason').textContent = r.reason || '-';
-        document.getElementById('modal-details').textContent = r.details || '-';
-        document.getElementById('modal-productId').textContent = r.productId || '-';
-        document.getElementById('modal-resolve-btn').onclick = () => resolveReport(id);
-        document.getElementById('modal-delete-btn').onclick = () => deleteReportedProduct(r.productId, id);
-        document.getElementById('reportModal').classList.add('open');
+        // ✅ FIX: null 체크 추가 - DOM 요소 안전 접근
+        const setEl = (elId, val) => { const el = document.getElementById(elId); if (el) el.textContent = val; };
+        setEl('modal-reason', r.reason || '-');
+        setEl('modal-details', r.details || '-');
+        setEl('modal-productId', r.productId || '-');
+        const resolveBtn = document.getElementById('modal-resolve-btn');
+        const deleteBtn  = document.getElementById('modal-delete-btn');
+        if (resolveBtn) resolveBtn.onclick = () => resolveReport(id);
+        if (deleteBtn)  deleteBtn.onclick  = () => deleteReportedProduct(r.productId, id);
+        const modal = document.getElementById('reportModal');
+        if (modal) modal.classList.add('open');
     };
 
     window.resolveReport = async function(id) {
@@ -1113,24 +1118,34 @@
     window.openInquiryModal = function(id) {
         const i = allInquiries.find(i => i.id === id);
         if (!i) return;
-        document.getElementById('inq-type').textContent = i.type || '-';
-        document.getElementById('inq-title').textContent = i.title || '-';
-        document.getElementById('inq-content').textContent = i.content || '-';
-        document.getElementById('inq-answer').value = i.adminNote || '';
-        document.getElementById('inq-resolve-btn').onclick = async () => {
-            try {
-                await updateDoc(doc(db, 'inquiries', id), {
-                    status: 'answered',
-                    adminNote: document.getElementById('inq-answer').value,
-                    answeredAt: serverTimestamp()
-                });
-                showToast('답변 완료 처리되었습니다');
-                closeModal('inquiryModal');
-                await loadInquiries();
-                updateStats();
-            } catch(e) { showToast('처리 실패', 'error'); }
+        // ✅ FIX: null 체크 추가 - DOM 요소 안전 접근
+        const setEl = (elId, val, prop='textContent') => {
+            const el = document.getElementById(elId);
+            if (el) el[prop] = val;
         };
-        document.getElementById('inquiryModal').classList.add('open');
+        setEl('inq-type', i.type || '-');
+        setEl('inq-title', i.title || '-');
+        setEl('inq-content', i.content || '-');
+        setEl('inq-answer', i.adminNote || '', 'value');
+        const resolveBtn = document.getElementById('inq-resolve-btn');
+        if (resolveBtn) {
+            resolveBtn.onclick = async () => {
+                try {
+                    const answerEl = document.getElementById('inq-answer');
+                    await updateDoc(doc(db, 'inquiries', id), {
+                        status: 'answered',
+                        adminNote: answerEl ? answerEl.value : '',
+                        answeredAt: serverTimestamp()
+                    });
+                    showToast('답변 완료 처리되었습니다');
+                    closeModal('inquiryModal');
+                    await loadInquiries();
+                    updateStats();
+                } catch(e) { showToast('처리 실패', 'error'); }
+            };
+        }
+        const modal = document.getElementById('inquiryModal');
+        if (modal) modal.classList.add('open');
     };
 
     // ===== 공통 =====
