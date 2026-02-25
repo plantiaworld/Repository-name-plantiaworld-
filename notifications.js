@@ -1,4 +1,4 @@
-\// ============================================
+// ============================================
 // notifications.js  –  PlantiaWorld 알림 유틸 (V1 방식)
 // ============================================
 // ✅ FCM V1 API 대응 버전
@@ -10,23 +10,12 @@
 
 import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import {
-    getMessaging,
-    getToken,
-    onMessage,
-} from "https://www.gstatic.com/firebasejs/10.8.1/firebase-messaging.js";
-import {
     getFirestore,
     doc,
     updateDoc,
     arrayUnion,
 } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-// ──────────────────────────────────────────
-// ⚠️ VAPID 키만 설정하면 됩니다!
-//   Firebase Console → ⚙️ 프로젝트 설정 →
-//   클라우드 메시징 → 웹 구성(맨 아래) →
-//   웹 푸시 인증서 → "키 쌍 생성" → 공개 키 복사
-// ──────────────────────────────────────────
 const VAPID_KEY = 'BCzKbFzkoRHIX1qWuBOlZtTNDqm4DOnSW7OEiRfD2MnAcigf7HXHQkdZJpXpUnETP0t8azfP4UYwqEhqDM1pTDg';
 
 const firebaseConfig = {
@@ -45,55 +34,56 @@ const db  = getFirestore(app);
 let messagingInstance = null;
 
 // ============================================
-// FCM 초기화 및 토큰 등록
+// ✅ FIX: getMessaging을 동적 import로 처리
+//    SW 없거나 HTTP 환경이면 조용히 null 반환
 // ============================================
-export async function initNotifications(uid) {
-    if (!('Notification' in window)) {
-        console.log('⚠️ 이 브라우저는 알림을 지원하지 않습니다.');
-        return null;
-    }
+async function getMessagingInstance() {
+    if (messagingInstance) return messagingInstance;
 
-    if (VAPID_KEY === 'YOUR_VAPID_KEY_HERE') {
-        console.warn('⚠️ VAPID_KEY를 설정해주세요. (설정_가이드.md → STEP 1 참조)');
-        return null;
-    }
-
-    // ✅ FIX: Service Worker 미지원 브라우저 조기 종료
     if (!('serviceWorker' in navigator)) {
-        console.warn('⚠️ 이 브라우저는 Service Worker를 지원하지 않습니다.');
+        console.warn('⚠️ Service Worker 미지원 - FCM 불가');
+        return null;
+    }
+
+    const swRegs = await navigator.serviceWorker.getRegistrations();
+    if (!swRegs || swRegs.length === 0) {
+        console.warn('⚠️ Service Worker 미등록 - FCM 초기화 건너뜀');
+        return null;
+    }
+
+    const isSecure = location.protocol === 'https:' || location.hostname === 'localhost';
+    if (!isSecure) {
+        console.warn('⚠️ HTTPS 필요 - FCM 불가');
         return null;
     }
 
     try {
+        const { getMessaging } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-messaging.js");
+        messagingInstance = getMessaging(app);
+        return messagingInstance;
+    } catch (e) {
+        console.warn('⚠️ Firebase Messaging 로드 실패:', e.message);
+        return null;
+    }
+}
+
+export async function initNotifications(uid) {
+    if (!('Notification' in window)) return null;
+    if (VAPID_KEY === 'YOUR_VAPID_KEY_HERE') return null;
+
+    try {
         const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-            console.log('🔕 알림 권한 거부됨');
-            return null;
-        }
+        if (permission !== 'granted') return null;
 
-        if (!messagingInstance) {
-            messagingInstance = getMessaging(app);
-        }
+        const messaging = await getMessagingInstance();
+        if (!messaging) return null;
 
-        // ✅ FIX: Service Worker가 완전히 active 상태가 될 때까지 대기한 뒤
-        //         그 registration을 getToken()에 직접 전달합니다.
-        //         이렇게 하지 않으면 SW가 준비되기 전에 PushManager.subscribe()가
-        //         호출되어 "no active Service Worker" AbortError가 발생합니다.
-        const swRegistration = await navigator.serviceWorker.ready;
-
-        const token = await getToken(messagingInstance, {
-            vapidKey: VAPID_KEY,
-            serviceWorkerRegistration: swRegistration,   // ✅ 핵심 수정
-        });
-
-        if (!token) {
-            console.warn('⚠️ FCM 토큰 발급 실패');
-            return null;
-        }
+        const { getToken } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-messaging.js");
+        const token = await getToken(messaging, { vapidKey: VAPID_KEY });
+        if (!token) return null;
 
         console.log('✅ FCM 토큰 발급 성공:', token.substring(0, 20) + '...');
 
-        // Firestore users/{uid}에 토큰 저장 (배열 → 다중 기기 지원)
         await updateDoc(doc(db, 'users', uid), {
             fcmTokens: arrayUnion(token),
             notificationEnabled: true,
@@ -101,34 +91,27 @@ export async function initNotifications(uid) {
 
         console.log('✅ FCM 토큰 Firestore 저장 완료');
         return token;
-
     } catch (err) {
         console.error('❌ FCM 초기화 실패:', err);
         return null;
     }
 }
 
-// ============================================
-// 포그라운드 메시지 수신 (앱이 열려있을 때)
-// ============================================
-export function listenForegroundMessages(onReceive) {
-    if (!messagingInstance) {
-        try {
-            messagingInstance = getMessaging(app);
-        } catch (e) {
-            console.warn('⚠️ Messaging 인스턴스 생성 실패:', e);
-            return;
-        }
+export async function listenForegroundMessages(onReceive) {
+    const messaging = await getMessagingInstance();
+    if (!messaging) return;
+
+    try {
+        const { onMessage } = await import("https://www.gstatic.com/firebasejs/10.8.1/firebase-messaging.js");
+        onMessage(messaging, (payload) => {
+            console.log('📨 포그라운드 메시지 수신:', payload);
+            onReceive && onReceive(payload);
+        });
+    } catch (e) {
+        console.warn('⚠️ 포그라운드 메시지 리스너 등록 실패:', e.message);
     }
-    onMessage(messagingInstance, (payload) => {
-        console.log('📨 포그라운드 메시지 수신:', payload);
-        onReceive && onReceive(payload);
-    });
 }
 
-// ============================================
-// 앱 내 토스트 배너 표시
-// ============================================
 export function showInAppNotification({ title, body, chatId, avatarUrl }) {
     document.querySelectorAll('.plantia-notif-toast').forEach(n => n.remove());
 
@@ -144,7 +127,6 @@ export function showInAppNotification({ title, body, chatId, avatarUrl }) {
         animation: notifSlideIn 0.3s ease;
     `;
 
-    // ✅ FIX: avatarUrl XSS 방어 - escapeStr로 처리
     const safeAvatarUrl = avatarUrl ? escapeStr(avatarUrl) : '';
     const avatar = safeAvatarUrl
         ? `<img src="${safeAvatarUrl}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;" onerror="this.style.display='none'">`
@@ -153,7 +135,7 @@ export function showInAppNotification({ title, body, chatId, avatarUrl }) {
     toast.innerHTML = `
         <style>@keyframes notifSlideIn {
             from { transform:translateX(-50%) translateY(-20px); opacity:0; }
-            to   { transform:translateX(-50%) translateY(0);     opacity:1; }
+            to   { transform:translateX(-50%) translateY(0); opacity:1; }
         }</style>
         ${avatar}
         <div style="flex:1;min-width:0;">
