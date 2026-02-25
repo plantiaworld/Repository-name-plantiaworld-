@@ -1,4 +1,4 @@
-// ============================================
+\// ============================================
 // notifications.js  –  PlantiaWorld 알림 유틸 (V1 방식)
 // ============================================
 // ✅ FCM V1 API 대응 버전
@@ -58,6 +58,12 @@ export async function initNotifications(uid) {
         return null;
     }
 
+    // ✅ FIX: Service Worker 미지원 브라우저 조기 종료
+    if (!('serviceWorker' in navigator)) {
+        console.warn('⚠️ 이 브라우저는 Service Worker를 지원하지 않습니다.');
+        return null;
+    }
+
     try {
         const permission = await Notification.requestPermission();
         if (permission !== 'granted') {
@@ -69,7 +75,17 @@ export async function initNotifications(uid) {
             messagingInstance = getMessaging(app);
         }
 
-        const token = await getToken(messagingInstance, { vapidKey: VAPID_KEY });
+        // ✅ FIX: Service Worker가 완전히 active 상태가 될 때까지 대기한 뒤
+        //         그 registration을 getToken()에 직접 전달합니다.
+        //         이렇게 하지 않으면 SW가 준비되기 전에 PushManager.subscribe()가
+        //         호출되어 "no active Service Worker" AbortError가 발생합니다.
+        const swRegistration = await navigator.serviceWorker.ready;
+
+        const token = await getToken(messagingInstance, {
+            vapidKey: VAPID_KEY,
+            serviceWorkerRegistration: swRegistration,   // ✅ 핵심 수정
+        });
+
         if (!token) {
             console.warn('⚠️ FCM 토큰 발급 실패');
             return null;

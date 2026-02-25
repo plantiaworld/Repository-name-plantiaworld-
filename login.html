@@ -31,7 +31,8 @@
             reauthenticateWithCredential,
             setPersistence,
             browserSessionPersistence,
-            browserLocalPersistence
+            browserLocalPersistence,
+            sendPasswordResetEmail
         } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -132,6 +133,7 @@
                 pageTitle.textContent = '회원가입';
                 pageSubTitle.textContent = 'PlantiaWorld에 가입하세요';
                 document.getElementById('rememberMeSection').classList.add('hidden');
+                document.getElementById('forgotPasswordLink').classList.add('hidden');
                 
                 // 지도 초기화
                 setTimeout(() => {
@@ -145,6 +147,7 @@
                 pageTitle.textContent = '로그인';
                 pageSubTitle.textContent = '이웃과 식물을 나누는 즐거움';
                 document.getElementById('rememberMeSection').classList.remove('hidden');
+                document.getElementById('forgotPasswordLink').classList.remove('hidden');
             }
             
             hideError();
@@ -463,16 +466,28 @@
                     break;
                 case 'auth/wrong-password':
                     errorMessage = '비밀번호가 틀렸습니다.';
-                    break;
+                    showErrorWithReset(errorMessage);
+                    return;
                 case 'auth/invalid-credential':
                     errorMessage = '이메일 또는 비밀번호가 올바르지 않습니다.';
-                    break;
+                    showErrorWithReset(errorMessage);
+                    return;
                 case 'auth/too-many-requests':
                     errorMessage = '너무 많은 시도가 있었습니다. 잠시 후 다시 시도해주세요.';
                     break;
             }
             
             showError(errorMessage);
+        }
+
+        function showErrorWithReset(message) {
+            const errorElement = document.getElementById('errorMessage');
+            const errorText = document.getElementById('errorText');
+            
+            errorText.innerHTML = `${message} <button type="button" onclick="showResetModal()" class="underline font-bold text-red-700 hover:text-red-900 ml-1">비밀번호 재설정</button>`;
+            errorElement.classList.remove('hidden');
+            
+            // 비밀번호 오류 시 자동 숨김 없이 유지
         }
 
         function showError(message) {
@@ -510,6 +525,88 @@
             document.body.appendChild(toast);
             
             setTimeout(() => toast.remove(), 3000);
+        }
+
+        // ========== 비밀번호 재설정 ==========
+        window.handlePasswordReset = async function() {
+            const email = document.getElementById('email').value.trim();
+            
+            if (!email) {
+                showResetModal();
+                return;
+            }
+            
+            // 이메일이 입력되어 있으면 바로 발송
+            await sendResetEmail(email);
+        };
+
+        window.showResetModal = function() {
+            document.getElementById('resetModal').classList.remove('hidden');
+            const emailVal = document.getElementById('email').value.trim();
+            if (emailVal) {
+                document.getElementById('resetEmail').value = emailVal;
+            }
+            document.getElementById('resetEmail').focus();
+        };
+
+        window.closeResetModal = function() {
+            document.getElementById('resetModal').classList.add('hidden');
+            document.getElementById('resetEmail').value = '';
+            document.getElementById('resetModalError').classList.add('hidden');
+            document.getElementById('resetModalSuccess').classList.add('hidden');
+        };
+
+        window.submitPasswordReset = async function() {
+            const email = document.getElementById('resetEmail').value.trim();
+            if (!email) {
+                document.getElementById('resetModalError').querySelector('span').textContent = '이메일 주소를 입력해주세요.';
+                document.getElementById('resetModalError').classList.remove('hidden');
+                return;
+            }
+            await sendResetEmail(email, true);
+        };
+
+        async function sendResetEmail(email, fromModal = false) {
+            const btn = fromModal
+                ? document.getElementById('resetSubmitBtn')
+                : null;
+
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.add('button-loading');
+            }
+
+            try {
+                await sendPasswordResetEmail(auth, email);
+                
+                if (fromModal) {
+                    document.getElementById('resetModalError').classList.add('hidden');
+                    document.getElementById('resetModalSuccess').classList.remove('hidden');
+                    setTimeout(() => closeResetModal(), 3000);
+                } else {
+                    showToast(`${email} 로 재설정 링크를 보냈습니다!`, 'success');
+                }
+            } catch (error) {
+                console.error('비밀번호 재설정 오류:', error);
+                let msg = '재설정 이메일 전송에 실패했습니다.';
+                if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-email') {
+                    msg = '등록되지 않은 이메일 주소입니다.';
+                } else if (error.code === 'auth/too-many-requests') {
+                    msg = '너무 많은 요청입니다. 잠시 후 다시 시도해주세요.';
+                }
+
+                if (fromModal) {
+                    document.getElementById('resetModalError').querySelector('span').textContent = msg;
+                    document.getElementById('resetModalError').classList.remove('hidden');
+                } else {
+                    showToast(msg, 'error');
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('button-loading');
+                }
+            }
         }
 
         console.log('Firebase 초기화 완료');
@@ -692,6 +789,14 @@
                 </div>
             </div>
 
+            <!-- 비밀번호를 잊으셨나요? 링크 (로그인 모드에서만 표시) -->
+            <div id="forgotPasswordLink" class="text-right -mt-1">
+                <button type="button" onclick="showResetModal()"
+                    class="text-xs text-green-600 hover:text-green-700 font-medium">
+                    비밀번호를 잊으셨나요?
+                </button>
+            </div>
+
             <button type="submit" id="submitBtn" 
                 class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl transition-colors shadow-lg">
                 로그인
@@ -767,6 +872,62 @@
         </div>
     </div>
 
+
+    <!-- ✅ 비밀번호 재설정 모달 -->
+    <div id="resetModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4"
+         style="background: rgba(0,0,0,0.45);">
+        <div class="glass-card rounded-3xl shadow-2xl w-full max-w-sm p-8 relative">
+            <!-- 닫기 버튼 -->
+            <button onclick="closeResetModal()"
+                class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors">
+                <i class="fas fa-times text-lg"></i>
+            </button>
+
+            <div class="text-center mb-6">
+                <div class="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <i class="fas fa-key text-green-600 text-xl"></i>
+                </div>
+                <h2 class="text-xl font-bold text-gray-800">비밀번호 재설정</h2>
+                <p class="text-xs text-gray-500 mt-1">가입하신 이메일로 재설정 링크를 보내드립니다</p>
+            </div>
+
+            <!-- 오류 메시지 -->
+            <div id="resetModalError" class="hidden mb-3 p-3 bg-red-50 rounded-xl border border-red-200">
+                <p class="text-sm text-red-700 font-medium flex items-center gap-2">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span></span>
+                </p>
+            </div>
+
+            <!-- 성공 메시지 -->
+            <div id="resetModalSuccess" class="hidden mb-3 p-4 bg-green-50 rounded-xl border border-green-200">
+                <p class="text-sm text-green-700 font-medium flex items-center gap-2">
+                    <i class="fas fa-check-circle text-green-600"></i>
+                    재설정 링크를 이메일로 발송했습니다. 메일함을 확인해주세요!
+                </p>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">이메일 주소</label>
+                    <input type="email" id="resetEmail"
+                        class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        placeholder="example@email.com"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault(); submitPasswordReset();}">
+                </div>
+
+                <button id="resetSubmitBtn" onclick="submitPasswordReset()"
+                    class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl transition-colors shadow-lg">
+                    재설정 링크 발송
+                </button>
+
+                <button onclick="closeResetModal()"
+                    class="w-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-medium py-2.5 rounded-xl transition-colors text-sm">
+                    취소
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- ✅ PWA Service Worker 등록 -->
     <script>

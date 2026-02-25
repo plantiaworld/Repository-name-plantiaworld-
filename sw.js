@@ -2,7 +2,10 @@
 // 🌿 PlantiaWorld Service Worker  v2
 // ====================================================
 
-const CACHE_NAME   = 'plantiaworld-v2';
+// ✅ FIX: CACHE_NAME을 제거하고 STATIC_CACHE 하나로 통일합니다.
+//         이전 코드는 CACHE_NAME('plantiaworld-v2')을 정의해 두고
+//         실제 캐싱에는 STATIC_CACHE('plantiaworld-static-v2')만 사용했기 때문에
+//         activate의 필터 로직이 자기 자신을 삭제 대상에 올릴 위험이 있었습니다.
 const STATIC_CACHE = 'plantiaworld-static-v2';
 
 // 오프라인에서도 보여줄 핵심 페이지들
@@ -39,19 +42,25 @@ self.addEventListener('install', (event) => {
 // ====================================================
 self.addEventListener('activate', (event) => {
     console.log('[SW] 활성화 중...');
+
+    // ✅ FIX: clients.claim()을 event.waitUntil() 안의 Promise 체인에 포함시킵니다.
+    //         기존 코드는 waitUntil() 밖에서 호출해 제어권 인계(claim)가
+    //         activate 완료 전에 보장되지 않았습니다.
     event.waitUntil(
         caches.keys().then((cacheNames) => {
-            return Promise.all(
-                cacheNames
-                    .filter(name => name !== CACHE_NAME && name !== STATIC_CACHE)
+            return Promise.all([
+                // 현재 버전이 아닌 오래된 캐시 삭제
+                ...cacheNames
+                    .filter(name => name !== STATIC_CACHE)
                     .map(name => {
                         console.log('[SW] 오래된 캐시 삭제:', name);
                         return caches.delete(name);
-                    })
-            );
+                    }),
+                // ✅ FIX: claim()을 Promise.all에 포함 → activate 완료 전 제어권 인계 보장
+                self.clients.claim(),
+            ]);
         })
     );
-    self.clients.claim();
 });
 
 // ====================================================
@@ -59,6 +68,11 @@ self.addEventListener('activate', (event) => {
 // ====================================================
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
+
+    // ✅ FIX: chrome-extension:// 등 http/https 외 스킴은 Cache API가 지원하지 않으므로 무시
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return;
+    }
 
     // Firebase / 외부 CDN은 네트워크로 직접 처리
     if (
